@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import aiohttp
+from privacy_rules import local_ollama_url
 from presentation import AIResponseError, json_response, SUMMARY_SCHEMA, summary_text, NOTE
 
 _limit = asyncio.Semaphore(1)
@@ -14,14 +15,19 @@ async def analyze(snapshot):
 
 
 async def complete(system, data, schema=None):
+    endpoint=local_ollama_url(os.getenv('OLLAMA_URL','http://127.0.0.1:11434'))
+    model=os.getenv('OLLAMA_MODEL','qwen3:8b')
+    if model.endswith((':cloud','-cloud')):
+        raise ValueError('請使用已下載的本地模型。')
     async with _limit:
         timeout = aiohttp.ClientTimeout(total=120)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
-                os.getenv('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/') + '/api/chat',
+                endpoint + '/api/chat',
+                allow_redirects=False,
                 json={
                     **({'format': schema} if schema else {}),
-                    'model': os.getenv('OLLAMA_MODEL', 'qwen3:8b'),
+                    'model': model,
                     'stream': False,
                     'think': False,
                     'options': {'num_predict': 800},
