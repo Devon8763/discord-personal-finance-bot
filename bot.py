@@ -1,4 +1,5 @@
 from presentation import number
+from privacy_rules import can_run_in_channel
 from ledger import trade, history, undo as undo_trade, save_fund_price
 from message_input import process_message, display_time
 import discord
@@ -52,6 +53,13 @@ bot = InvestmentBot(
     intents=intents,
     help_command=None
 )
+
+@bot.check
+async def private_financial_commands(ctx):
+    if can_run_in_channel(ctx.command.name,ctx.guild):
+        return True
+    await ctx.send('🔒 帳務指令請私訊機器人，或輸入 !help 使用僅本人可見的操作面板。請勿在公開頻道貼上帳目。')
+    return False
 print("程式開始")
 print("BOT starting")
 
@@ -107,8 +115,10 @@ class HelpView(discord.ui.View):
 
     @discord.ui.button(label="📈 投資紀錄", style=discord.ButtonStyle.secondary, row=1)
     async def investments(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = HelpView()
-        await interaction.response.edit_message(embed=view.main_embed(), view=view)
+        from investment_ui import InvestmentPanel
+        import sys
+        view = InvestmentPanel(sys.modules[__name__],interaction.user.id)
+        await interaction.response.send_message(embed=view.render(),view=view,ephemeral=True)
 
     # 📈 股票
     @discord.ui.button(label="📈 股票", style=discord.ButtonStyle.primary)
@@ -232,8 +242,9 @@ async def privacy(ctx):
     await ctx.send("""🔒 隱私說明
 
 ✔ 儲存主動輸入的投資、生活支出、用途、預算與固定項目
-✔ 不儲存聊天內容
-✔ 不分享資料
+✔ 帳目存於機器人主機，依 Discord 使用者隔離；不保存一般聊天
+✔ 帳務指令限私訊，伺服器請用 !help 開啟私人表單
+ℹ️ Discord 仍會接收訊息與表單；本機資料庫未加密，主機管理者可讀取
 
 🧹 !clear yes 刪除投資資料；!生活清除 yes 刪除生活資料
 """)
@@ -285,8 +296,8 @@ async def guide(ctx):
     embed.add_field(
         name="🔒 隱私說明",
         value="""• 儲存主動輸入的投資、生活支出、用途、預算與固定項目  
-• 不儲存聊天內容  
-• 不會分享任何資料  
+• 帳目保存在主機；帳務文字指令請私訊使用  
+• Discord 仍接收輸入；資料庫未加密，主機管理者可讀取  
 
 🧹 `!clear yes` 刪投資；`!生活清除 yes` 刪生活記帳""",
         inline=False
@@ -663,6 +674,8 @@ async def build_analysis(ctx):
 async def on_command_error(ctx, error):
     if getattr(ctx, 'spending_error_handled', False):
         return
+    if isinstance(error,commands.CheckFailure):
+        return
     if isinstance(error, commands.CommandNotFound):
         await ctx.send('❌ 找不到此指令，請輸入 !help 查看用法。')
         return
@@ -671,7 +684,7 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.MaxConcurrencyReached):
         await ctx.send('請等待上一個分析完成。')
     else:
-        print(type(error).__name__, str(error))
+        print('Command failed:', type(error).__name__)
         await ctx.send('❌ 操作失敗，請稍後再試。')
 
 

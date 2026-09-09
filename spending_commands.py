@@ -4,6 +4,7 @@ import time
 import json
 from datetime import timedelta
 import discord
+from selection_ui import SafeModal
 from discord.ext import commands, tasks
 import spending as sp
 from ai import complete
@@ -55,15 +56,18 @@ def fixed_data(user_id):
     return dict(month=month,rules=rules,entries=entries,total=sum(e['amount'] for e in entries if not e['voided']))
 
 
-class RecurringModal(discord.ui.Modal):
-    def __init__(self,cog,kind):
+class RecurringModal(SafeModal):
+    def __init__(self,cog,kind,selections=None,owner=None):
         super().__init__(title=f'新增{kind}')
         self.cog,self.kind = cog,kind
+        self.selections,self.owner=selections or {},owner
         self.item_name = discord.ui.TextInput(label='項目名稱',placeholder='例如：影音平台、房租、筆電',max_length=100)
         self.amount = discord.ui.TextInput(label='每期金額（元）' if kind=='分期' else '每月金額（元）',placeholder='例如：390',max_length=20)
         self.category = discord.ui.TextInput(label='分類（可先用 !分類清單 查看）',placeholder='填入你的啟用分類名稱',max_length=20)
         self.start = discord.ui.TextInput(label='開始月份（YYYY-MM，本月或下月）',default=sp.today().strftime('%Y-%m'),max_length=7)
         for field in (self.item_name,self.amount,self.category,self.start):
+            if (field is self.category and 'category' in self.selections) or (field is self.start and 'month' in self.selections):
+                continue
             self.add_item(field)
         self.periods = None
         if kind=='分期':
@@ -71,13 +75,18 @@ class RecurringModal(discord.ui.Modal):
             self.add_item(self.periods)
 
     async def on_submit(self,interaction):
+        if self.owner is not None and self.owner!=interaction.user.id:
+            await interaction.response.send_message('請使用自己的表單。',ephemeral=True)
+            return
         await interaction.response.defer(ephemeral=True,thinking=True)
         ctx = self.cog.interaction_context(interaction)
         try:
             periods = int(self.periods.value) if self.periods else 0
             await self.cog.prepare(ctx)
-            key = sp.add_recurring(str(interaction.user.id),self.kind,self.item_name.value,self.amount.value,self.category.value,self.start.value,periods)
-            await send(ctx,f'✅ 已新增{self.kind} #{key}\n\n項目：{self.item_name.value}\n金額：{number(self.amount.value)} 元／月\n分類：{self.category.value}\n開始：{self.start.value}'+(f'\n期數：{periods} 期' if periods else ''))
+            cat=self.selections.get('category',self.category.value)
+            month=self.selections.get('month',self.start.value)
+            key = sp.add_recurring(str(interaction.user.id),self.kind,self.item_name.value,self.amount.value,cat,month,periods)
+            await send(ctx,f'✅ 已新增{self.kind} #{key}\n\n項目：{self.item_name.value}\n金額：{number(self.amount.value)} 元／月\n分類：{cat}\n開始：{month}'+(f'\n期數：{periods} 期' if periods else ''))
             await self.cog.prepare(ctx)
         except ValueError as error:
             await ctx.send('請檢查欄位：'+str(error))
@@ -90,47 +99,38 @@ class RecurringKindView(discord.ui.View):
 
     @discord.ui.button(label='訂閱（每月持續）',style=discord.ButtonStyle.primary)
     async def subscription(self,interaction,button):
-        await interaction.response.send_modal(RecurringModal(self.cog,'訂閱'))
+        await self.choose(interaction,'訂閱')
 
     @discord.ui.button(label='固定支出（例如房租）',style=discord.ButtonStyle.secondary)
     async def fixed(self,interaction,button):
-        await interaction.response.send_modal(RecurringModal(self.cog,'固定'))
+        await self.choose(interaction,'固定')
 
     @discord.ui.button(label='分期（有總期數）',style=discord.ButtonStyle.success)
     async def installment(self,interaction,button):
-        await interaction.response.send_modal(RecurringModal(self.cog,'分期'))
+        await self.choose(interaction,'分期')
+
+    async def choose(self,i,kind):
+        from selection_ui import choose_category,choose_month
+        async def category_selected(event,cat):
+            async def month_selected(event,month):
+                await event.response.send_modal(RecurringModal(self.cog,kind,{'category':cat,'month':month},event.user.id))
+            await choose_month(event,month_selected,recurring=True)
+        await choose_category(i,category_selected)
 
 
 class SpendingView(discord.ui.View):
-    def __init__(self, cog):
-        super().__init__(timeout=120)
-        self.cog = cog
+    def __init__(self,cog):
+        super().__init__(timeout=300)
+        self.cog=cog
 
-    @discord.ui.button(label='➕ 新增固定支出／訂閱／分期',style=discord.ButtonStyle.success,row=1)
-    async def add_fixed(self,interaction,button):
-        await interaction.response.send_message('先選擇種類，再填寫表單：',view=RecurringKindView(self.cog),ephemeral=True)
+    @discord.ui.button(label='💰 開啟生活看板',style=discord.ButtonStyle.success)
+    async def month(self,interaction,button):
+        from dashboard import open_dashboard
+        await open_dashboard(self.cog,interaction)
 
-    @discord.ui.button(label='📊 本月支出', style=discord.ButtonStyle.primary)
-    async def month(self, interaction, button):
-        await interaction.response.defer(ephemeral=True,thinking=True)
-        ctx = self.cog.interaction_context(interaction)
-        await self.cog.prepare(ctx)
-        await send(ctx,format_report(sp.month_report(str(ctx.author.id))))
-
-    @discord.ui.button(label='🤖 記帳 AI 分析', style=discord.ButtonStyle.success)
-    async def analysis(self, interaction, button):
-        await interaction.response.defer(ephemeral=True,thinking=True)
-        ctx = self.cog.interaction_context(interaction)
-        try:
-            await self.cog.analyze_spending(ctx,'月',3)
-        except Exception:
-            await ctx.send('記帳分析暫時無法完成，請稍後再試。')
-
-    @discord.ui.button(label='📅 固定負擔', style=discord.ButtonStyle.secondary)
-    async def fixed(self, interaction, button):
-        await interaction.response.defer(ephemeral=True,thinking=True)
-        ctx = self.cog.interaction_context(interaction)
-        await self.cog.show_fixed(ctx)
+    @discord.ui.button(label='📖 指令說明',style=discord.ButtonStyle.secondary)
+    async def instructions(self,interaction,button):
+        await interaction.response.send_message(embed=self.cog.detail_embed(),ephemeral=True)
 
 
 class Spending(commands.Cog):
@@ -198,6 +198,11 @@ class Spending(commands.Cog):
         await ctx.send(embed=self.help_embed(),view=SpendingView(self))
 
     def help_embed(self):
+        embed=discord.Embed(title='💰 生活記帳',description='**把支出、預算與固定負擔放在同一個看板。**\n\n總覽 · 支出 · 預算 · 固定負擔 · AI\n\n點下方按鈕開啟，資料僅自己可見。',color=0x2ecc71)
+        embed.set_footer(text='文字指令仍可使用 · 看板閒置5分鐘後重新開啟')
+        return embed
+
+    def detail_embed(self):
         embed = discord.Embed(title='💰 生活支出與預算',description='獨立於投資；台幣記帳，不記收入或銀行餘額。',color=0x2ecc71)
         embed.add_field(name='記錄一筆支出',value='格式：`!支出 金額 分類 用途`\n例：`!支出 150 餐飲 午餐`\n150＝金額；餐飲＝分類；午餐＝用途\n\n`!支出明細` 查看編號；`!記帳撤銷` 還原最近操作',inline=False)
         embed.add_field(name='每月預算',value='格式：`!預算 月份 總額或分類 金額`\n例：`!預算 '+sp.today().strftime('%Y-%m')+' 總額 20000`\n先設總額，再設定餐飲等分類。',inline=False)
