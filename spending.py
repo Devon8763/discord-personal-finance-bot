@@ -2,6 +2,7 @@ from presentation import number
 """Independent TWD spending ledger. Money is stored as integer cents."""
 import calendar
 import json
+import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from db import get_conn
@@ -103,6 +104,7 @@ def init_schema(conn):
     conn.executescript('''
     CREATE TABLE IF NOT EXISTS spending_categories(user_id TEXT NOT NULL,name TEXT NOT NULL,active INTEGER NOT NULL,PRIMARY KEY(user_id,name));
     CREATE TABLE IF NOT EXISTS spending_settings(user_id TEXT PRIMARY KEY,levels TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS spending_onboarding(user_id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS spending_users(user_id TEXT PRIMARY KEY, started TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS expenses(
       id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, spent_on TEXT NOT NULL,
@@ -125,17 +127,125 @@ def init_schema(conn):
       id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,notice_key TEXT NOT NULL,
       body TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0,UNIQUE(user_id,notice_key));
     ''')
+    # Additive, repeatable upgrade. Old action JSON is handled by undo defaults.
+    conn.execute('BEGIN IMMEDIATE')
+    try:
+        columns = {r[1] for r in conn.execute('PRAGMA table_info(expenses)')}
+        for name, definition in (
+            ('payment_source_id', 'INTEGER'),
+            ('payment_source_name', "TEXT NOT NULL DEFAULT '未指定'"),
+            ('kind', "TEXT NOT NULL DEFAULT 'consumption'"),
+            ('revision', 'INTEGER NOT NULL DEFAULT 0'),
+        ):
+            if name not in columns:
+                conn.execute(f'ALTER TABLE expenses ADD COLUMN {name} {definition}')
+        conn.execute('''CREATE TABLE IF NOT EXISTS payment_sources(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+            name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(user_id,name))''')
+        conn.execute('CREATE INDEX IF NOT EXISTS payment_sources_user_active ON payment_sources(user_id,active,id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS expenses_user_kind_date ON expenses(user_id,kind,voided,spent_on,id)')
+        conn.execute('''CREATE TABLE IF NOT EXISTS spending_shortcuts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,name TEXT NOT NULL,
+            category TEXT NOT NULL,payment_source_id INTEGER NOT NULL,note TEXT NOT NULL,
+            cents INTEGER,position INTEGER NOT NULL,active INTEGER NOT NULL DEFAULT 1)''')
+        conn.execute('CREATE INDEX IF NOT EXISTS shortcuts_user_order ON spending_shortcuts(user_id,active,position,id)')
+        for (user_id,) in conn.execute('SELECT user_id FROM spending_users UNION SELECT user_id FROM expenses').fetchall():
+            ensure_payment_sources(conn, user_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def register(conn, user_id):
     conn.execute('INSERT OR IGNORE INTO spending_users VALUES(?,?)', (user_id, today().isoformat()))
+    ensure_payment_sources(conn, user_id)
+
+
+def ensure_payment_sources(conn, user_id):
+    conn.executemany('INSERT OR IGNORE INTO payment_sources(user_id,name) VALUES(?,?)',
+                     [(user_id, '未指定'), (user_id, '現金')])
+
+
+def payment_sources(user_id, include_inactive=False):
+    with transaction() as conn:
+        ensure_payment_sources(conn, user_id)
+        conn.row_factory = sqlite3.Row
+        return [dict(r) for r in conn.execute(
+            'SELECT * FROM payment_sources WHERE user_id=?' + ('' if include_inactive else ' AND active=1') +
+            " ORDER BY CASE name WHEN '未指定' THEN 0 WHEN '現金' THEN 1 ELSE 2 END,id", (user_id,))]
+
+
+def payment_name(name):
+    name = name.strip()
+    if not name or len(name) > 30 or any(ord(c) < 32 for c in name):
+        raise ValueError('付款來源名稱需 1～30 字，不可包含換行或控制字元')
+    return name
+
+
+def add_payment_source(user_id, name):
+    name = payment_name(name)
+    with transaction() as conn:
+        register(conn, user_id)
+        try:
+            return conn.execute('INSERT INTO payment_sources(user_id,name) VALUES(?,?)', (user_id, name)).lastrowid
+        except sqlite3.IntegrityError:
+            raise ValueError('已有同名付款來源（含停用項目），請使用其他名稱') from None
+
+
+def rename_payment_source(user_id, key, name):
+    name = payment_name(name)
+    with transaction() as conn:
+        old = conn.execute('SELECT name FROM payment_sources WHERE id=? AND user_id=?', (key, user_id)).fetchone()
+        if not old:
+            raise ValueError('找不到自己的付款來源')
+        if old[0] in ('現金', '未指定'):
+            raise ValueError('「現金」與「未指定」為保留來源，不能改名或停用')
+        try:
+            conn.execute('UPDATE payment_sources SET name=? WHERE id=? AND user_id=?', (name, key, user_id))
+        except sqlite3.IntegrityError:
+            raise ValueError('已有同名付款來源（含停用項目），請使用其他名稱') from None
+
+
+def disable_payment_source(user_id, key):
+    with transaction() as conn:
+        old = conn.execute('SELECT name FROM payment_sources WHERE id=? AND user_id=? AND active=1', (key, user_id)).fetchone()
+        if not old:
+            raise ValueError('找不到自己的啟用付款來源')
+        if old[0] in ('現金', '未指定'):
+            raise ValueError('「現金」與「未指定」為保留來源，不能改名或停用')
+        conn.execute('UPDATE payment_sources SET active=0 WHERE id=? AND user_id=?', (key, user_id))
+
+
+def resolve_payment(conn, user_id, key):
+    if key is None:
+        result = conn.execute("SELECT id,name FROM payment_sources WHERE user_id=? AND name='未指定' AND active=1", (user_id,)).fetchone()
+    else:
+        result = conn.execute('SELECT id,name FROM payment_sources WHERE user_id=? AND id=? AND active=1', (user_id, key)).fetchone()
+    if not result:
+        raise ValueError('付款來源已停用或不屬於你，請重新選擇；也可選「未指定」')
+    return result[0], result[1]
+
+
+def get_expense(user_id, key):
+    found = rows("SELECT * FROM expenses WHERE user_id=? AND id=? AND voided=0 AND kind='consumption'", (user_id, key))
+    if not found:
+        raise ValueError('找不到自己的有效消費')
+    return found[0]
+
+
+def month_expenses(user_id, month):
+    start = month_date(month)
+    return rows("SELECT * FROM expenses WHERE user_id=? AND spent_on>=? AND spent_on<? AND voided=0 AND kind='consumption' ORDER BY spent_on DESC,id DESC",
+                (user_id, start.isoformat(), next_month(start).isoformat()))
 
 
 def alerts(conn, user_id, month):
     setting = conn.execute('SELECT levels FROM spending_settings WHERE user_id=?',(user_id,)).fetchone()
     levels = json.loads(setting[0]) if setting else [80,100]
     for cat, budget in conn.execute('SELECT category,cents FROM budgets WHERE user_id=? AND month=?', (user_id, month)).fetchall():
-        sql = 'SELECT COALESCE(SUM(cents),0) FROM expenses WHERE user_id=? AND substr(spent_on,1,7)=? AND voided=0'
+        sql = "SELECT COALESCE(SUM(cents),0) FROM expenses WHERE user_id=? AND substr(spent_on,1,7)=? AND voided=0 AND kind='consumption'"
         args = [user_id, month]
         if cat != '總額':
             sql += ' AND category=?'
@@ -147,7 +257,7 @@ def alerts(conn, user_id, month):
                 conn.execute('INSERT OR IGNORE INTO spending_notices(user_id,notice_key,body) VALUES(?,?,?)', (user_id, f'budget:{month}:{cat}:{level}', text))
 
 
-def add(user_id, amount, cat, note, on=None):
+def add(user_id, amount, cat, note, on=None, payment_source_id=None):
     cents, cat = money(amount), category(cat,user_id)
     day = date.fromisoformat(on) if on else today()
     if day > today():
@@ -156,25 +266,32 @@ def add(user_id, amount, cat, note, on=None):
         raise ValueError('用途需為 1～200 字')
     with transaction() as conn:
         register(conn, user_id)
-        key = conn.execute('INSERT INTO expenses(user_id,spent_on,cents,category,note) VALUES(?,?,?,?,?)', (user_id, day.isoformat(), cents, cat, note)).lastrowid
+        source_id, source_name = resolve_payment(conn, user_id, payment_source_id)
+        key = conn.execute("INSERT INTO expenses(user_id,spent_on,cents,category,note,payment_source_id,payment_source_name,kind) VALUES(?,?,?,?,?,?,?,'consumption')", (user_id, day.isoformat(), cents, cat, note, source_id, source_name)).lastrowid
         conn.execute('INSERT INTO expense_actions(user_id,expense_id,before_json) VALUES(?,?,?)', (user_id, key, 'null'))
         alerts(conn, user_id, day.strftime('%Y-%m'))
     return key
 
 
-def edit(user_id, key, amount, cat, note, on):
-    cents, cat, day = money(amount), category(cat,user_id), date.fromisoformat(on)
+def edit(user_id, key, amount, cat, note, on, payment_source_id=None, expected_revision=None):
+    # Omitted source preserves the original snapshot, including inactive sources.
+    cents, day = money(amount), date.fromisoformat(on)
     if day > today() or not note.strip() or len(note) > 200:
         raise ValueError('請確認日期與用途，日期不可在未來')
     with transaction() as conn:
         conn.row_factory = __import__('sqlite3').Row
-        old = conn.execute('SELECT * FROM expenses WHERE id=? AND user_id=? AND voided=0', (key, user_id)).fetchone()
+        old = conn.execute("SELECT * FROM expenses WHERE id=? AND user_id=? AND voided=0 AND kind='consumption'", (key, user_id)).fetchone()
         if not old:
             raise ValueError('找不到自己的有效支出')
+        if expected_revision is not None and old['revision'] != expected_revision:
+            raise ValueError('此筆帳目已變動，請重新選取後修改')
+        if cat != old['category']:
+            category(cat, user_id)
+        source_id, source_name = (old['payment_source_id'], old['payment_source_name']) if payment_source_id is None else resolve_payment(conn, user_id, payment_source_id)
         if old['source'] != 'manual' and on != old['spent_on']:
             raise ValueError('自動記帳的月份與日期不可移動，可調整金額、分类與用途')
         conn.execute('INSERT INTO expense_actions(user_id,expense_id,before_json) VALUES(?,?,?)', (user_id, key, json.dumps(dict(old))))
-        conn.execute('UPDATE expenses SET spent_on=?,cents=?,category=?,note=? WHERE id=?', (on, cents, cat, note, key))
+        conn.execute('UPDATE expenses SET spent_on=?,cents=?,category=?,note=?,payment_source_id=?,payment_source_name=?,revision=revision+1 WHERE id=? AND user_id=?', (day.isoformat(), cents, cat, note, source_id, source_name, key, user_id))
         alerts(conn, user_id, on[:7])
 
 
@@ -189,9 +306,9 @@ def undo(user_id, confirm=None):
             raise ValueError('操作已變動，請重新輸入 !記帳撤銷')
         old = json.loads(row[2])
         if old is None:
-            conn.execute('UPDATE expenses SET voided=1 WHERE id=? AND user_id=?', (row[1], user_id))
+            conn.execute('UPDATE expenses SET voided=1,revision=revision+1 WHERE id=? AND user_id=?', (row[1], user_id))
         else:
-            conn.execute('UPDATE expenses SET spent_on=?,cents=?,category=?,note=?,voided=? WHERE id=? AND user_id=?', (old['spent_on'], old['cents'], old['category'], old['note'], old['voided'], row[1], user_id))
+            conn.execute('UPDATE expenses SET spent_on=?,cents=?,category=?,note=?,voided=?,payment_source_id=?,payment_source_name=?,revision=revision+1 WHERE id=? AND user_id=?', (old['spent_on'], old['cents'], old['category'], old['note'], old['voided'], old.get('payment_source_id'), old.get('payment_source_name','未指定'), row[1], user_id))
         conn.execute('UPDATE expense_actions SET undone=1 WHERE id=?', (row[0],))
         return row[0], row[1]
 
@@ -264,7 +381,7 @@ def stop_recurring(user_id, key):
 
 
 def report(user_id, start, end):
-    entries = rows('SELECT * FROM expenses WHERE user_id=? AND spent_on>=? AND spent_on<=? AND voided=0 ORDER BY spent_on,id', (user_id,start.isoformat(),end.isoformat()))
+    entries = rows("SELECT * FROM expenses WHERE user_id=? AND spent_on>=? AND spent_on<=? AND voided=0 AND kind='consumption' ORDER BY spent_on,id", (user_id,start.isoformat(),end.isoformat()))
     total = sum(r['cents'] for r in entries)
     cats = {}
     for cat in dict.fromkeys((*category_names(user_id,True),*(r['category'] for r in entries))):
@@ -275,6 +392,34 @@ def report(user_id, start, end):
     return dict(start=start.isoformat(),end=end.isoformat(),record_count=len(entries),total=total/100,
                 fixed=sum(r['cents'] for r in entries if r['source']!='manual')/100,categories=cats,
                 coverage='僅代表已記錄資料；未記錄不代表沒有消費',has_records=bool(entries))
+
+
+def onboarding_needed(user_id):
+    if rows('SELECT 1 FROM spending_onboarding WHERE user_id=?',(user_id,)):return False
+    for table in ('expenses','budgets','spending_shortcuts','recurring_expenses','spending_categories','spending_settings'):
+        if rows(f'SELECT 1 FROM {table} WHERE user_id=? LIMIT 1',(user_id,)):return False
+    return not rows("SELECT 1 FROM payment_sources WHERE user_id=? AND name NOT IN ('現金','未指定') LIMIT 1",(user_id,))
+
+
+def dismiss_onboarding(user_id):
+    with transaction() as conn:
+        conn.execute('INSERT OR IGNORE INTO spending_onboarding(user_id) VALUES(?)',(user_id,))
+
+
+def monthly_closing(user_id,month):
+    current=month_report(user_id,month)
+    start=month_date(month)
+    prior_end=start-timedelta(days=1)
+    comparison=current
+    if start==today().replace(day=1):
+        days=min(today().day,prior_end.day)
+        comparison=report(user_id,start,start.replace(day=days))
+        prior_end=prior_end.replace(day=days)
+    previous=report(user_id,prior_end.replace(day=1),prior_end)
+    payments=rows("SELECT payment_source_name,SUM(cents) AS cents,COUNT(*) AS count FROM expenses WHERE user_id=? AND kind='consumption' AND voided=0 AND spent_on>=? AND spent_on<=? GROUP BY payment_source_name ORDER BY cents DESC,payment_source_name",(user_id,current['start'],current['end']))
+    unspecified=next((dict(count=p['count'],cents=p['cents']) for p in payments if p['payment_source_name']=='未指定'),dict(count=0,cents=0))
+    difference=round(comparison['total']-previous['total'],2) if comparison['has_records'] and previous['has_records'] else None
+    return dict(current=current,comparison=comparison,previous=previous,payments=payments,unspecified=unspecified,difference=difference)
 
 
 def month_report(user_id, month=None):
@@ -323,6 +468,28 @@ def notices(user_id):
     return rows('SELECT * FROM spending_notices WHERE user_id=? AND delivered=0 ORDER BY id', (user_id,))
 
 
+def chart_data(user_id, month=None):
+    start = month_date(month) if month else today().replace(day=1)
+    if start > today():
+        raise ValueError('尚未到此月份')
+    end = min(next_month(start)-timedelta(days=1), today())
+    months = [start]
+    for _ in range(5):
+        months.insert(0, (months[0]-timedelta(days=1)).replace(day=1))
+    entries = rows("SELECT spent_on,cents,category,payment_source_name FROM expenses WHERE user_id=? AND spent_on>=? AND spent_on<=? AND voided=0 AND kind='consumption'", (user_id,months[0].isoformat(),end.isoformat()))
+    categories, payments = {}, {}
+    totals = {m.strftime('%Y-%m'): 0 for m in months}
+    for row in entries:
+        period = row['spent_on'][:7]
+        totals[period] += row['cents']
+        if period == start.strftime('%Y-%m'):
+            for group, label in ((categories, row['category']), (payments, row['payment_source_name'])):
+                group[label] = group.get(label, 0) + row['cents']
+    return dict(start=start.isoformat(), end=end.isoformat(), trend_start=months[0].isoformat(),
+                categories=sorted(categories.items(), key=lambda p: (-p[1], p[0])),
+                payments=sorted(payments.items(), key=lambda p: (-p[1], p[0])), months=list(totals.items()))
+
+
 def delivered(key, user_id):
     with transaction() as conn:
         conn.execute('UPDATE spending_notices SET delivered=1 WHERE id=? AND user_id=?', (key,user_id))
@@ -330,5 +497,155 @@ def delivered(key, user_id):
 
 def clear(user_id):
     with transaction() as conn:
-        for table in ('expenses','expense_actions','budgets','recurring_expenses','spending_notices','spending_users','spending_categories','spending_settings'):
+        for table in ('expenses','expense_actions','budgets','recurring_expenses','spending_notices','spending_users','spending_categories','spending_settings','payment_sources','spending_shortcuts','spending_onboarding'):
             conn.execute(f'DELETE FROM {table} WHERE user_id=?', (user_id,))
+
+
+def shortcuts(user_id, include_inactive=False):
+    return rows('SELECT s.*,p.name AS payment_source_name,p.active AS payment_active FROM spending_shortcuts s LEFT JOIN payment_sources p ON p.id=s.payment_source_id AND p.user_id=s.user_id WHERE s.user_id=?' +
+                ('' if include_inactive else ' AND s.active=1') + ' ORDER BY s.position,s.id', (user_id,))
+
+
+def shortcut(user_id, key):
+    found = next((r for r in shortcuts(user_id) if r['id']==key), None)
+    if not found:
+        raise ValueError('找不到自己的啟用捷徑')
+    return found
+
+
+def save_shortcut(user_id, name, cat, payment_source_id, note, amount=None, key=None):
+    name=payment_name(name)
+    category(cat,user_id)
+    if not note.strip() or len(note)>200:
+        raise ValueError('用途需為1～200字')
+    cents=money(amount) if amount is not None and str(amount).strip() else None
+    with transaction() as conn:
+        register(conn,user_id)
+        source_id,_=resolve_payment(conn,user_id,payment_source_id)
+        if key is None:
+            position=conn.execute('SELECT COALESCE(MAX(position),0)+1 FROM spending_shortcuts WHERE user_id=?',(user_id,)).fetchone()[0]
+            return conn.execute('INSERT INTO spending_shortcuts(user_id,name,category,payment_source_id,note,cents,position) VALUES(?,?,?,?,?,?,?)',(user_id,name,cat,source_id,note,cents,position)).lastrowid
+        changed=conn.execute('UPDATE spending_shortcuts SET name=?,category=?,payment_source_id=?,note=?,cents=? WHERE user_id=? AND id=? AND active=1',(name,cat,source_id,note,cents,user_id,key)).rowcount
+        if not changed:
+            raise ValueError('找不到自己的啟用捷徑')
+        return key
+
+
+def disable_shortcut(user_id, key):
+    with transaction() as conn:
+        if not conn.execute('UPDATE spending_shortcuts SET active=0 WHERE user_id=? AND id=? AND active=1',(user_id,key)).rowcount:
+            raise ValueError('找不到自己的啟用捷徑')
+
+
+def move_shortcut(user_id, key, direction):
+    if direction not in (-1,1):
+        raise ValueError('排序方向需為上一項或下一項')
+    with transaction() as conn:
+        items=conn.execute('SELECT id,position FROM spending_shortcuts WHERE user_id=? AND active=1 ORDER BY position,id',(user_id,)).fetchall()
+        index=next((i for i,r in enumerate(items) if r[0]==key),None)
+        if index is None:
+            raise ValueError('找不到自己的啟用捷徑')
+        target=index+direction
+        if 0<=target<len(items):
+            conn.executemany('UPDATE spending_shortcuts SET position=? WHERE user_id=? AND id=?',[(items[target][1],user_id,key),(items[index][1],user_id,items[target][0])])
+
+
+def recent_expenses(user_id):
+    return rows("SELECT * FROM expenses WHERE user_id=? AND kind='consumption' AND voided=0 AND source='manual' ORDER BY spent_on DESC,id DESC LIMIT 6",(user_id,))
+
+
+def parse_search_date(value,label):
+    if not value:return ''
+    for fmt in ('%Y-%m-%d','%Y/%m/%d','%Y%m%d'):
+        try:
+            parsed=datetime.strptime(value,fmt).date()
+        except ValueError:
+            continue
+        if parsed.strftime(fmt)!=value:continue
+        if parsed>today():raise ValueError(label+'不可是未來日期。')
+        return parsed.isoformat()
+    raise ValueError(label+'格式錯誤，請使用 YYYY-MM-DD、YYYY/MM/DD 或 YYYYMMDD，日期須存在且月份、日期補零。')
+
+
+def search_expenses(user_id, keyword='', start=None, end=None):
+    keyword=keyword.strip()
+    start=(start or '').strip()
+    end=(end or '').strip()
+    if not any((keyword,start,end)):
+        raise ValueError('請至少填寫關鍵字、開始日期或結束日期其中一項。')
+    start=parse_search_date(start,'開始日期')
+    end=parse_search_date(end,'結束日期') or today().isoformat()
+    if start and start>end:
+        raise ValueError('開始日期不可晚於結束日期。')
+    sql="SELECT * FROM expenses WHERE user_id=? AND kind='consumption' AND voided=0 AND source='manual' AND spent_on<=?"
+    args=[user_id,end]
+    if start:
+        sql+=' AND spent_on>=?';args.append(start)
+    if keyword:
+        sql+=' AND instr(lower(note),lower(?))>0';args.append(keyword)
+    return rows(sql+' ORDER BY spent_on DESC,id DESC',args)
+
+
+def shortcut_recommendation(user_id, as_of=None):
+    end=as_of or today()
+    start=end-timedelta(days=29)
+    fixed=shortcuts(user_id)[:3]
+    if len(fixed)!=3:
+        return None
+    active=set(category_names(user_id))
+    groups=rows("""SELECT e.category,e.payment_source_id,e.note,p.name AS payment_source_name,COUNT(*) AS count
+        FROM expenses e JOIN payment_sources p ON p.id=e.payment_source_id AND p.user_id=e.user_id AND p.active=1
+        WHERE e.user_id=? AND e.voided=0 AND e.kind='consumption' AND e.source='manual'
+        AND e.spent_on>=? AND e.spent_on<=?
+        GROUP BY e.category,e.payment_source_id,e.note
+        ORDER BY count DESC,e.category,e.payment_source_id,e.note""",(user_id,start.isoformat(),end.isoformat()))
+    def key(row): return row['category'],row['payment_source_id'],row['note']
+    counts={key(r):r['count'] for r in groups if r['category'] in active}
+    lowest=min(range(3),key=lambda n:(counts.get(key(fixed[n]),0),-n))
+    target=fixed[lowest]
+    lowest_count=counts.get(key(target),0)
+    pinned={key(r) for r in fixed}
+    candidate=next((r for r in groups if r['category'] in active and key(r) not in pinned),None)
+    if candidate is None or candidate['count']<max(3,lowest_count*2):
+        return None
+    return dict(candidate=candidate,target=target,lowest_count=lowest_count,
+                period_start=start.isoformat(),period_end=end.isoformat())
+
+
+def calendar_days(user_id, month):
+    start=month_date(month)
+    if start>today():
+        raise ValueError('尚未到此月份')
+    end=next_month(start)-timedelta(days=1)
+    totals={r['spent_on']:r['cents'] for r in rows("""SELECT spent_on,SUM(cents) AS cents FROM expenses
+        WHERE user_id=? AND voided=0 AND kind='consumption' AND spent_on>=? AND spent_on<=?
+        GROUP BY spent_on""",(user_id,start.isoformat(),min(end,today()).isoformat()))}
+    maximum=max(totals.values(),default=0)
+    result=[]
+    for day in range(1,end.day+1):
+        on=start.replace(day=day).isoformat()
+        cents=totals.get(on,0)
+        level='—' if not cents else '░' if cents*3<=maximum else '▒' if cents*3<=maximum*2 else '▓'
+        result.append(dict(date=on,cents=cents,level=level))
+    return result
+
+
+def review(user_id, unit):
+    now=today()
+    if unit=='week':
+        start=now-timedelta(days=now.weekday())
+        current=report(user_id,start,now)
+        comparison=current
+        previous=report(user_id,start-timedelta(days=7),now-timedelta(days=7))
+    elif unit=='month':
+        start=now.replace(day=1)
+        prior_end=start-timedelta(days=1)
+        days=min(now.day,prior_end.day)
+        current=month_report(user_id)
+        comparison=report(user_id,start,start.replace(day=days))
+        previous=report(user_id,prior_end.replace(day=1),prior_end.replace(day=days))
+    else:
+        raise ValueError('回顧請選本週或本月')
+    difference=round(comparison['total']-previous['total'],2) if comparison['has_records'] and previous['has_records'] else None
+    payments=rows("SELECT payment_source_name,SUM(cents) AS cents FROM expenses WHERE user_id=? AND kind='consumption' AND voided=0 AND spent_on>=? AND spent_on<=? GROUP BY payment_source_name ORDER BY cents DESC,payment_source_name",(user_id,current['start'],current['end']))
+    return dict(unit=unit,current=current,comparison=comparison,previous=previous,difference=difference,payments=payments)

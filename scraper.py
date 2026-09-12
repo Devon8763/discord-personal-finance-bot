@@ -1,8 +1,9 @@
-import yfinance as yf
 from stock_name_map import STOCK_NAME_MAP
 
 def get_price(symbol):
     try:
+        import yfinance as yf
+
         display_symbol = symbol
 
         # 🔥 支援上市 + 上櫃

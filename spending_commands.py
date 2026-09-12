@@ -4,10 +4,11 @@ import time
 import json
 from datetime import timedelta
 import discord
-from selection_ui import SafeModal
+from form_ui import InlineForm
 from discord.ext import commands, tasks
 import spending as sp
 from ai import complete
+from ai_consent import ensure_consent
 import query_plan
 from ledger import history
 from presentation import number, NOTE, AIResponseError, json_response, SUMMARY_SCHEMA, summary_text
@@ -41,7 +42,7 @@ def format_report(report, include_note=True):
 def fixed_data(user_id):
     rules = sp.rows('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id', (user_id,))
     month = sp.today().strftime('%Y-%m')
-    entries = sp.rows("SELECT id,note,cents,source,voided FROM expenses WHERE user_id=? AND period=? ORDER BY id", (user_id,month))
+    entries = sp.rows("SELECT id,note,cents,source,voided FROM expenses WHERE user_id=? AND period=? AND kind='consumption' ORDER BY id", (user_id,month))
     for rule in rules:
         rule.pop('user_id',None)
         rule['monthly_amount'] = rule.pop('cents')/100
@@ -56,37 +57,36 @@ def fixed_data(user_id):
     return dict(month=month,rules=rules,entries=entries,total=sum(e['amount'] for e in entries if not e['voided']))
 
 
-class RecurringModal(SafeModal):
-    def __init__(self,cog,kind,selections=None,owner=None):
-        super().__init__(title=f'新增{kind}')
-        self.cog,self.kind = cog,kind
-        self.selections,self.owner=selections or {},owner
-        self.item_name = discord.ui.TextInput(label='項目名稱',placeholder='例如：影音平台、房租、筆電',max_length=100)
-        self.amount = discord.ui.TextInput(label='每期金額（元）' if kind=='分期' else '每月金額（元）',placeholder='例如：390',max_length=20)
-        self.category = discord.ui.TextInput(label='分類（可先用 !分類清單 查看）',placeholder='填入你的啟用分類名稱',max_length=20)
-        self.start = discord.ui.TextInput(label='開始月份（YYYY-MM，本月或下月）',default=sp.today().strftime('%Y-%m'),max_length=7)
-        for field in (self.item_name,self.amount,self.category,self.start):
-            if (field is self.category and 'category' in self.selections) or (field is self.start and 'month' in self.selections):
-                continue
-            self.add_item(field)
-        self.periods = None
-        if kind=='分期':
-            self.periods = discord.ui.TextInput(label='總期數',placeholder='例如：10（共10期）',max_length=3)
-            self.add_item(self.periods)
+class RecurringModal(InlineForm):
+    def __init__(self,cog,kind='固定',selections=None,owner=None,draft=None):
+        if owner is None: raise ValueError('固定項目表單必須指定操作者')
+        super().__init__(owner,title='新增固定支出／訂閱／分期',draft=draft)
+        self.cog=cog
+        self.reopen=lambda draft:RecurringModal(cog,kind,owner=owner,draft=draft)
+        selected=selections or {}
+        self.item_name=self.text('name','項目名稱',limit=100)
+        self.amount=self.text('amount','每月／每期金額（元）',limit=30)
+        category_default=selected.get('category')
+        self.category=self.category(category_default)
+        months=[sp.today().strftime('%Y-%m'),sp.next_month(sp.today().replace(day=1)).strftime('%Y-%m')]
+        choices=[(f'{k} · {m}',(k,m)) for k in ('固定','訂閱','分期') for m in months]
+        self.plan=self.select('plan','種類與開始月份',choices,(kind,selected.get('month',months[0])))
+        self.periods=self.text('periods','總期數（分期必填；固定／訂閱留空）',limit=3,required=False)
 
     async def on_submit(self,interaction):
         if self.owner is not None and self.owner!=interaction.user.id:
             await interaction.response.send_message('請使用自己的表單。',ephemeral=True)
             return
+        values=await self.read_form(interaction)
+        if values is None: return
         await interaction.response.defer(ephemeral=True,thinking=True)
-        ctx = self.cog.interaction_context(interaction)
+        ctx=self.cog.interaction_context(interaction)
         try:
-            periods = int(self.periods.value) if self.periods else 0
+            kind,month=values['plan']
+            periods=int(values['periods']) if values['periods'] else 0
             await self.cog.prepare(ctx)
-            cat=self.selections.get('category',self.category.value)
-            month=self.selections.get('month',self.start.value)
-            key = sp.add_recurring(str(interaction.user.id),self.kind,self.item_name.value,self.amount.value,cat,month,periods)
-            await send(ctx,f'✅ 已新增{self.kind} #{key}\n\n項目：{self.item_name.value}\n金額：{number(self.amount.value)} 元／月\n分類：{cat}\n開始：{month}'+(f'\n期數：{periods} 期' if periods else ''))
+            key=sp.add_recurring(str(interaction.user.id),kind,values['name'],values['amount'],values['category'],month,periods)
+            await send(ctx,f'✅ 已新增{kind} #{key}\n項目：{values["name"]}\n金額：{number(values["amount"])} 元／月\n分類：{values["category"]}\n開始：{month}'+(f'\n期數：{periods}' if periods else ''))
             await self.cog.prepare(ctx)
         except ValueError as error:
             await ctx.send('請檢查欄位：'+str(error))
@@ -110,12 +110,9 @@ class RecurringKindView(discord.ui.View):
         await self.choose(interaction,'分期')
 
     async def choose(self,i,kind):
-        from selection_ui import choose_category,choose_month
-        async def category_selected(event,cat):
-            async def month_selected(event,month):
-                await event.response.send_modal(RecurringModal(self.cog,kind,{'category':cat,'month':month},event.user.id))
-            await choose_month(event,month_selected,recurring=True)
-        await choose_category(i,category_selected)
+        from privacy_rules import private_interaction
+        if not await private_interaction(i):return
+        await i.response.send_modal(RecurringModal(self.cog,kind,owner=i.user.id))
 
 
 class SpendingView(discord.ui.View):
@@ -176,12 +173,63 @@ class Spending(commands.Cog):
         sp.sync_recurring(str(ctx.author.id))
         await self.notify(ctx)
 
+    async def cog_app_command_error(self, interaction, error):
+        text = '生活入口暫時無法開啟，請稍後重試或使用 !help／!記帳說明。'
+        if interaction.response.is_done():
+            await interaction.followup.send(text, ephemeral=True)
+        else:
+            await interaction.response.send_message(text, ephemeral=True)
+
     async def notify(self,ctx):
+        # Send actual notices only after the batch receipt; never mark buffered notices delivered.
+        if getattr(ctx, 'spending_batch', False):
+            return
         user_id = str(ctx.author.id)
         async with self.notice_lock:
             for notice in sp.notices(user_id):
                 await send(ctx,notice['body'])
                 sp.delivered(notice['id'],user_id)
+
+    async def process_batch(self, message, lines):
+        from copy import copy
+        from message_input import BATCH_SPENDING_COMMANDS
+        if message.guild is not None or not 2 <= len(lines) <= 50 or any(line.split()[0] not in BATCH_SPENDING_COMMANDS for line in lines):
+            raise ValueError('批次生活記帳限私訊的2～50筆支援指令')
+        # Keep background delivery behind the batch receipt. Reuse the existing notice lock.
+        async with self.notice_lock:
+            receipts = []
+            ctx = None
+            for index, line in enumerate(lines, 1):
+                single = copy(message)
+                single.content = line
+                ctx = await self.bot.get_context(single)
+                original_send = ctx.send
+                ctx.spending_batch = True
+                messages = []
+                async def collect(content=None, **kwargs):
+                    if content:
+                        messages.append(str(content))
+                ctx.send = collect
+                try:
+                    # Keep Discord's parser, checks, hooks and each command's atomic write.
+                    await ctx.command.invoke(ctx)
+                except commands.CommandError as error:
+                    cause = getattr(error, 'original', error)
+                    if isinstance(cause, ValueError):
+                        detail = str(cause)
+                    elif isinstance(error, commands.UserInputError):
+                        detail = f'參數格式錯誤：!{ctx.command.qualified_name} {ctx.command.signature}'
+                    else:
+                        detail = '操作未完成，請先核對帳目再重試此筆。'
+                    messages.append(f'❌ {detail}')
+                finally:
+                    ctx.send = original_send
+                    ctx.spending_batch = False
+                if messages:
+                    receipts.append(f'{index:02}｜'+'\n    '.join('\n'.join(messages).splitlines()))
+                await asyncio.sleep(0)
+            await send(ctx, '🧾 批次生活記帳結果（各筆獨立，勿重貼已成功項目）\n\n' + '\n'.join(receipts))
+        await self.notify(ctx)
 
     async def cog_command_error(self,ctx,error):
         cause = getattr(error,'original',error)
@@ -198,13 +246,14 @@ class Spending(commands.Cog):
         await ctx.send(embed=self.help_embed(),view=SpendingView(self))
 
     def help_embed(self):
-        embed=discord.Embed(title='💰 生活記帳',description='**把支出、預算與固定負擔放在同一個看板。**\n\n總覽 · 支出 · 預算 · 固定負擔 · AI\n\n點下方按鈕開啟，資料僅自己可見。',color=0x2ecc71)
+        embed=discord.Embed(title='💰 生活記帳',description='**把支出、預算與固定負擔放在同一個看板。**\n\n今天 · 帳目 · 更多\n\n點下方按鈕開啟，資料僅自己可見。',color=0x2ecc71)
         embed.set_footer(text='文字指令仍可使用 · 看板閒置5分鐘後重新開啟')
         return embed
 
     def detail_embed(self):
         embed = discord.Embed(title='💰 生活支出與預算',description='獨立於投資；台幣記帳，不記收入或銀行餘額。',color=0x2ecc71)
         embed.add_field(name='記錄一筆支出',value='格式：`!支出 金額 分類 用途`\n例：`!支出 150 餐飲 午餐`\n150＝金額；餐飲＝分類；午餐＝用途\n\n`!支出明細` 查看編號；`!記帳撤銷` 還原最近操作',inline=False)
+        embed.add_field(name='快速記帳／帳目管理／圖表',value='生活看板「＋記一筆消費」直接開啟表單，內含分類與付款來源下拉、日期、金額與用途。分類與付款來源可直接新增。\n「帳目」內的帳目管理可按月選取單筆修改；「更多」提供付款來源、支出圖表、預算、固定負擔、提醒、捷徑管理與生活 AI。\n原文字記帳未填來源一律記為「未指定」；文字修改保留原來源。',inline=False)
         embed.add_field(name='每月預算',value='格式：`!預算 月份 總額或分類 金額`\n例：`!預算 '+sp.today().strftime('%Y-%m')+' 總額 20000`\n先設總額，再設定餐飲等分類。',inline=False)
         embed.add_field(name='固定支出／訂閱／分期',value='**點下方「➕ 新增」按鈕，用表單填寫。**\n欄位：項目名稱、每月金額、分類、開始月份。\n只有分期需要總期數，訂閱與固定支出不必填。\n\n文字格式：`!固定新增 種類 名稱 金額 分類 月份 [期數]`\n例：`!固定新增 訂閱 影音 390 娛樂 '+sp.today().strftime('%Y-%m')+'`\n訂閱可省略期數；舊寫法的 0 表示持續至停用。\n`!固定清單` 查看；`!固定停用 編號` 停止',inline=False)
         embed.add_field(name='AI 與查詢',value='`!問 這個月餐飲花多少？`\n`!分類建議 超市買了牛奶與清潔劑`\n`!記帳分析 月 3`／`!記帳分析 週 4`\n`!生活清除 yes` 只刪除生活資料',inline=False)
@@ -293,10 +342,10 @@ class Spending(commands.Cog):
         sp.month_date(month)
         if page < 1:
             raise ValueError('頁數需大於零')
-        entries = sp.rows('SELECT * FROM expenses WHERE user_id=? AND substr(spent_on,1,7)=? ORDER BY spent_on DESC,id DESC LIMIT 20 OFFSET ?', (str(ctx.author.id),month,(page-1)*20))
+        entries = sp.rows("SELECT * FROM expenses WHERE user_id=? AND substr(spent_on,1,7)=? AND kind='consumption' ORDER BY spent_on DESC,id DESC LIMIT 20 OFFSET ?", (str(ctx.author.id),month,(page-1)*20))
         lines = [f'🧾 {month} 第 {page} 頁（每頁20筆）']
         for row in entries:
-            lines.append(f"#{row['id']} {row['spent_on']} {row['category']} {number(row['cents']/100)} 元｜{row['note']}｜{row['source']}"+('（已撤銷）' if row['voided'] else ''))
+            lines.append(f"#{row['id']} {row['spent_on']} {row['category']} {number(row['cents']/100)} 元｜{row['note']}｜付款來源：{row['payment_source_name']}｜{row['source']}"+('（已撤銷）' if row['voided'] else ''))
         await send(ctx,'\n'.join(lines) if entries else '此頁無紀錄')
 
     @commands.command(name='固定新增')
@@ -330,6 +379,7 @@ class Spending(commands.Cog):
         await ctx.send('✅ 已停用，已產生的支出保留，之後不再產生；改金額請停用後於下月新增。')
 
     async def analyze_spending(self,ctx,unit,count):
+        if not await ensure_consent(ctx): return
         user_id = str(ctx.author.id)
         if user_id in self.busy:
             await ctx.send('請等待上一個生活 AI 查詢完成。')
@@ -358,6 +408,7 @@ class Spending(commands.Cog):
 
     @commands.command(name='分類建議')
     async def classify(self,ctx,*,text:str):
+        if not await ensure_consent(ctx): return
         categories = sp.category_names(str(ctx.author.id))
         if not categories:
             raise ValueError('請先用 !分類新增 建立分類')
@@ -371,6 +422,7 @@ class Spending(commands.Cog):
 
     @commands.command(name='問', aliases=['ask'])
     async def ask(self,ctx,*,question:str):
+        if not await ensure_consent(ctx): return
         user_id = str(ctx.author.id)
         if user_id in self.busy:
             await ctx.send('請等待上一個生活 AI 查詢完成。')

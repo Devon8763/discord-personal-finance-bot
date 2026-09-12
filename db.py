@@ -5,7 +5,8 @@ DB_NAME = str(Path(__file__).with_name("data.db"))
 
 
 def get_conn():
-    return sqlite3.connect(DB_NAME)
+    # All writers already use BEGIN IMMEDIATE; allow short competing writes to finish.
+    return sqlite3.connect(DB_NAME, timeout=10)
 
 
 def init_db():
@@ -20,6 +21,9 @@ def init_db():
         user_id TEXT PRIMARY KEY
     )
     """)
+    c.execute('''CREATE TABLE IF NOT EXISTS ai_preferences (
+        user_id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)))''')
 
     # ========================
     # 股票 / ETF（含 shares🔥）
