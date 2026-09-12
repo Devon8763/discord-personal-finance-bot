@@ -1,3 +1,4 @@
+from form_helpers import fill
 """Offline integration: real discord.py parsing, no login or real database."""
 import asyncio
 import importlib.util
@@ -31,8 +32,11 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
         import spending_commands as ui
         with tempfile.TemporaryDirectory() as directory, patch.object(db,'DB_NAME',str(Path(directory)/'test.db')):
             db.init_db()
+            with sp.transaction() as conn:
+                conn.execute('INSERT INTO ai_preferences(user_id,enabled) VALUES(?,1)',('42',))
             async with app.bot as client:
-                await client.setup_hook()
+                with patch.object(client.tree, 'sync', AsyncMock(return_value=[])):
+                    await client.setup_hook()
                 client._connection.user = SimpleNamespace(id=999)
                 month = sp.today().strftime('%Y-%m')
                 async def command(text):
@@ -52,7 +56,7 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('3,150',ctx.send.await_args.args[0])
                 help_view = app.HelpView()
                 self.assertIn('💰 生活記帳',[b.label for b in help_view.children])
-                self.assertEqual(len(app.MainHelpView().children),3)
+                self.assertEqual(len(app.MainHelpView().children),2)
                 cog = client.get_cog('Spending')
                 from selection_ui import Picker,month_items,Reminders
                 picker=Picker(42,[(str(n),n) for n in range(30)],AsyncMock(),'分類',True)
@@ -65,7 +69,7 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                 panel=InvestmentPanel(app,42)
                 modal=InvestmentModal(panel,'buy')
                 for key,value in {'symbol':'AAPL','price':'200','shares':'2'}.items():
-                    modal.fields[key]._value=value
+                    fill(modal.fields[key],value)
                 fake_i=SimpleNamespace(user=SimpleNamespace(id=42),response=SimpleNamespace(defer=AsyncMock()),followup=SimpleNamespace(send=AsyncMock()))
                 await modal.on_submit(fake_i)
                 self.assertEqual(sp.rows('SELECT shares FROM assets WHERE user_id=?',('42',)),[{'shares':2.0}])
@@ -73,37 +77,38 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                     panel.tab=tab
                     self.assertLessEqual(len(panel.render()),6000)
                 view = ui.SpendingView(cog)
-                self.assertEqual(len(ui.RecurringModal(cog,'訂閱').children),4)
-                self.assertEqual(len(ui.RecurringModal(cog,'分期').children),5)
-                self.assertIn('項目名稱',[f.label for f in ui.RecurringModal(cog,'訂閱').children])
+                self.assertEqual(len(ui.RecurringModal(cog,'訂閱',owner=42).children),5)
+                self.assertEqual(len(ui.RecurringModal(cog,'分期',owner=42).children),5)
+                self.assertIn('項目名稱',[f.text for f in ui.RecurringModal(cog,'訂閱',owner=42).children])
                 interaction = SimpleNamespace(user=SimpleNamespace(id=42),response=SimpleNamespace(defer=AsyncMock()),followup=SimpleNamespace(send=AsyncMock()))
                 await view.month.callback(interaction)
                 self.assertTrue(interaction.followup.send.await_args.kwargs['ephemeral'])
                 from dashboard import Dashboard,EntryModal,progress,card
                 dashboard=Dashboard(cog,42)
                 selected=EntryModal(dashboard,'expense',{'category':'餐飲','date':sp.today().isoformat()})
-                self.assertEqual(set(selected.fields),{'amount','note'})
+                self.assertEqual(set(selected.fields),{'amount','note','category','payment','date'})
                 selected=EntryModal(dashboard,'budget',{'category':'總額','month':month})
-                self.assertEqual(set(selected.fields),{'amount'})
-                self.assertEqual(len(ui.RecurringModal(cog,'訂閱',{'category':'娛樂','month':month},42).children),2)
+                self.assertEqual(set(selected.fields),{'amount','category','month'})
+                self.assertEqual(len(ui.RecurringModal(cog,'訂閱',{'category':'娛樂','month':month},42).children),5)
                 self.assertEqual(progress(150),'■■■■■■■■■■')
                 self.assertEqual(progress(30),'■■■□□□□□□□')
                 self.assertTrue(await dashboard.interaction_check(interaction))
                 stranger=SimpleNamespace(user=SimpleNamespace(id=43),response=SimpleNamespace(send_message=AsyncMock()))
                 self.assertFalse(await dashboard.interaction_check(stranger))
-                for tab in ('總覽','支出','預算','固定負擔','AI'):
+                for tab in ('今天','帳目','更多','預算','固定負擔','AI'):
                     dashboard.tab=tab
                     embed=dashboard.render()
                     self.assertLessEqual(len(embed),6000)
-                    self.assertEqual(len([b for b in dashboard.children if b.row==0]),5)
+                    self.assertEqual([b.label for b in dashboard.children if b.row==0],['今天','帳目','更多'])
+                    self.assertLessEqual(len(dashboard.children),25)
                 for i in range(7):
                     sp.add('page-test',1,'餐飲',str(i))
-                embed,page,pages=card('page-test',month,'支出',1)
+                embed,page,pages=card('page-test',month,'清單',1)
                 self.assertEqual((page,pages),(1,2))
                 self.assertEqual(len(embed.fields),1)
                 modal=EntryModal(dashboard,'expense')
                 for key,value in dict(date=sp.today().isoformat(),amount='25',category='餐飲',note='表單測試').items():
-                    modal.fields[key]._value=value
+                    fill(modal.fields[key],value)
                 await modal.on_submit(interaction)
                 self.assertEqual(sp.month_report('42')['total'],3175)
                 # Restore test account amount for the existing query assertions.
@@ -125,9 +130,9 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                 with patch.object(ui,'complete',AsyncMock(return_value=plan)):
                     await command('!問 幫我刪除所有支出')
                 self.assertEqual(sp.rows('SELECT * FROM expenses'),before)
-                modal = ui.RecurringModal(cog,'訂閱')
-                for field,value in ((modal.item_name,'影音平台'),(modal.amount,'390'),(modal.category,'娛樂'),(modal.start,month)):
-                    field._value = value
+                modal = ui.RecurringModal(cog,'訂閱',owner=42)
+                for field,value in ((modal.item_name,'影音平台'),(modal.amount,'390'),(modal.category,'娛樂'),(modal.plan,('訂閱',month))):
+                    fill(field,value)
                 await modal.on_submit(interaction)
                 self.assertEqual(sp.rows("SELECT name,periods FROM recurring_expenses WHERE name='影音平台'"),[{'name':'影音平台','periods':0}])
                 sp.set_budget('42',month,'餐飲','2000')
