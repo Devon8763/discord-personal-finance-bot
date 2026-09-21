@@ -10,7 +10,7 @@
 
 - 新增 `life_ledger_service.py`，提供不依賴Discord物件的生活消費介面：`add_expense`、`get_expense`、`list_expenses`、`search_expenses`、`update_expense`、`void_expense`、`preview_undo`、`undo_latest_action`、`get_calendar_days`、`get_month_summary`、`get_chart_data`、`get_categories`、`get_payment_sources`與`get_recent_expenses`。
 - 單筆讀取、修改與軟撤銷都同時使用 `user_id` 和消費編號，沿用既有分類／付款來源驗證、立即交易、rollback及revision衝突防護。`void_expense`在同一交易寫入既有操作紀錄並設為 `voided=1`；任一步失敗即回滾，不執行SQLite `DELETE`，仍可用既有「撤銷最近操作」規則復原。
-- 一般搜尋、帳目管理、月曆、摘要與圖表排除已撤銷帳目；原本會顯示歷史狀態的看板清單與 `!支出明細` 保留「已撤銷」標示。未新增Discord刪除按鈕或指令。
+- 一般搜尋、帳目管理、月曆、摘要與圖表排除已撤銷帳目；原本會顯示歷史狀態的看板清單與 `!支出明細` 保留「已撤銷」標示，看板清單負頁碼仍夾至第一頁。未新增Discord刪除按鈕或指令。
 - Discord消費表單、修改表單、搜尋、看板清單、月曆、圖表、最近再記、分類／付款來源選項及 `!支出`、`!支出補登`、`!支出修改`、`!記帳撤銷`、`!月報`、`!支出明細` 改由Services呼叫既有規則；使用者看到的指令、按鈕、文案與資料結果不變。預算、固定負擔、提醒、捷徑管理、AI、投資、備份／復原及匯入／匯出不在本輪範圍。
 - 新增10項直接呼叫Services的隔離測試，涵蓋新增、單筆讀取、搜尋、列表／分頁、跨使用者拒絕、修改版本衝突、軟撤銷、最新操作衝突、SQLite故障注入回滾、有效資料篩選、月曆／摘要／圖表及本人分類／付款來源。
 

@@ -36,10 +36,10 @@ def card(user_id,month,tab,page=0):
         embed.add_field(name='洞察',value='支出圖表 · 本週回顧 · 本月回顧 · 生活 AI · 本月結帳',inline=False)
         embed.add_field(name='常用捷徑管理',value='新增、修改、排序與停用；使用捷徑仍須確認表單。',inline=False)
     elif tab=='清單':
-        requested_page = page
-        listing = life_service.list_expenses(user_id,month,include_voided=True,limit=6,offset=page*6)
+        requested_page = max(0,page)
+        listing = life_service.list_expenses(user_id,month,include_voided=True,limit=6,offset=requested_page*6)
         pages = max(1,(listing['total']+5)//6)
-        page = min(max(0,page),pages-1)
+        page = min(requested_page,pages-1)
         if page != requested_page:
             listing = life_service.list_expenses(user_id,month,include_voided=True,limit=6,offset=page*6)
         entries = listing['items']

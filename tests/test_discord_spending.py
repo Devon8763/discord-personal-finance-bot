@@ -106,6 +106,8 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                 embed,page,pages=card('page-test',month,'清單',1)
                 self.assertEqual((page,pages),(1,2))
                 self.assertEqual(len(embed.fields),1)
+                _,page,pages=card('page-test',month,'清單',-1)
+                self.assertEqual((page,pages),(0,2))
                 modal=EntryModal(dashboard,'expense')
                 for key,value in dict(date=sp.today().isoformat(),amount='25',category='餐飲',note='表單測試').items():
                     fill(modal.fields[key],value)
