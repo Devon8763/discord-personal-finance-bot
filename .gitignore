@@ -19,6 +19,8 @@ data.db
 *.sqlite-*
 *.sqlite3-*
 backups/
+.safety/
+.restore-*.sqlite3*
 exports/
 uploads/
 logs/
@@ -31,6 +33,9 @@ env/
 
 # 測試與工具快取
 .pytest_cache/
+.ruff_cache/
+.tmp/
+.worktrees/
 .coverage
 htmlcov/
 .mypy_cache/
@@ -38,5 +43,6 @@ htmlcov/
 # 作業系統與編輯器暫存
 .DS_Store
 Thumbs.db
+*.lnk
 .vscode/
 .idea/

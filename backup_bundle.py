@@ -68,7 +68,7 @@ settings包含分類(name/active)、付款方式(name/active)、捷徑(name/cate
 舊帳號自行匯出，新帳號私訊Bot上傳預覽後確認。同名設定或衝突保留目標帳號；目標已有預算即略過全部備份預算，過期月份不套用。同一投資標的已有持倉或歷史時整組略過，不混合持倉。
 CSV公式開頭加單引號，原始匯入內容以JSON為準。manifest僅驗證格式、版本與完整性，不證明來源真偽。
 無法登入舊帳號且無相容備份時無法找回。Bot不提供管理者代查看、代轉移或還原權限；主機管理者仍可能直接讀取資料庫。
-匯入後AI關閉，使用前需重新同意。無每日備份或背景同步。
+匯入後AI關閉，使用前需重新同意。這是使用者主動匯出檔，不供主機整體復原使用。
 ''').encode('utf-8-sig'),
     }
     from life_transfer import FIELDS
@@ -91,7 +91,10 @@ CSV公式開頭加單引號，原始匯入內容以JSON為準。manifest僅驗�
     with io.BytesIO() as output:
         with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
             for name,data in files.items():archive.writestr(name,data)
-        return output.getvalue()
+        payload=output.getvalue()
+    # Apply the same format and size limits before sending a portable backup.
+    read_bundle(payload)
+    return payload
 
 
 def read_bundle(payload):

@@ -54,13 +54,13 @@ class PrivacyView(OwnedView):
     def __init__(self,dashboard):
         super().__init__(dashboard.owner)
         self.dashboard=dashboard
-        for label in ('匯出我的生活資料','匯入我的備份','刪除我的生活資料','關閉'):
+        for label in ('匯出我的資料','匯入我的備份','刪除我的生活資料','關閉'):
             button=discord.ui.Button(label=label)
             async def click(i,action=label):
                 if not await self.interaction_check(i):return
                 if self.is_finished():return
                 if action!='關閉' and not await dm_owner(i,self.owner):return
-                if action=='匯出我的生活資料':await send_export(i)
+                if action=='匯出我的資料':await send_export(i)
                 elif action=='匯入我的備份':await i.response.send_modal(ImportBackup(self.dashboard))
                 elif action=='刪除我的生活資料':
                     view=DeleteLife(self.dashboard)

@@ -1,4 +1,4 @@
-"""Self-service consumption-only transfer, bound to the current DM user."""
+"""Self-service account data transfer, bound to the current DM user."""
 import asyncio
 import json
 import discord
