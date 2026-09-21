@@ -6,20 +6,29 @@ def _user(value):
     return str(value)
 
 
+def _expense(value):
+    result = dict(value)
+    result['status'] = 'voided' if result['voided'] else 'active'
+    result['origin'] = result['source']
+    result['entry_type'] = 'consumption'
+    return result
+
+
 def add_expense(user_id, amount, category, note, spent_on=None, payment_source_id=None):
     return sp.add(_user(user_id), amount, category, note, spent_on, payment_source_id)
 
 
 def get_expense(user_id, expense_id):
-    return sp.get_expense(_user(user_id), expense_id)
+    return _expense(sp.get_expense(_user(user_id), expense_id))
 
 
 def list_expenses(user_id, month, *, include_voided=False, limit=None, offset=0):
-    return sp.list_expenses(_user(user_id), month, include_voided, limit, offset)
+    result = sp.list_expenses(_user(user_id), month, include_voided, limit, offset)
+    return {'items': [_expense(row) for row in result['items']], 'total': result['total']}
 
 
 def search_expenses(user_id, keyword='', start=None, end=None):
-    return sp.search_expenses(_user(user_id), keyword, start, end)
+    return [_expense(row) for row in sp.search_expenses(_user(user_id), keyword, start, end)]
 
 
 def update_expense(user_id, expense_id, amount, category, note, spent_on,
@@ -67,4 +76,17 @@ def get_payment_sources(user_id, include_inactive=False):
 
 
 def get_recent_expenses(user_id):
-    return sp.recent_expenses(_user(user_id))
+    return [_expense(row) for row in sp.recent_expenses(_user(user_id))]
+
+
+def get_recurring_expenses(user_id):
+    return sp.recurring_expenses(_user(user_id))
+
+
+def get_recorded_months(user_id):
+    return sp.recorded_months(_user(user_id))
+
+
+def get_fixed_burdens(user_id):
+    result = sp.fixed_burdens(_user(user_id))
+    return {**result, 'entries': [_expense(row) for row in result['entries']]}

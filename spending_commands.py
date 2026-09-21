@@ -39,24 +39,6 @@ def format_report(report, include_note=True):
     return '\n\n'.join(lines)
 
 
-def fixed_data(user_id):
-    rules = sp.rows('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id', (user_id,))
-    month = sp.today().strftime('%Y-%m')
-    entries = sp.rows("SELECT id,note,cents,source,voided FROM expenses WHERE user_id=? AND period=? AND kind='consumption' ORDER BY id", (user_id,month))
-    for rule in rules:
-        rule.pop('user_id',None)
-        rule['monthly_amount'] = rule.pop('cents')/100
-        if rule['periods']:
-            start = sp.month_date(rule['start_month'])
-            elapsed = max(0,(sp.today().year-start.year)*12+sp.today().month-start.month+1)
-            rule['current_period'] = min(elapsed,rule['periods'])
-            rule['remaining_periods'] = max(0,rule['periods']-elapsed)
-            rule['remaining_scheduled_amount'] = rule['remaining_periods']*rule['monthly_amount']
-    for entry in entries:
-        entry['amount'] = entry.pop('cents')/100
-    return dict(month=month,rules=rules,entries=entries,total=sum(e['amount'] for e in entries if not e['voided']))
-
-
 class RecurringModal(InlineForm):
     def __init__(self,cog,kind='固定',selections=None,owner=None,draft=None):
         if owner is None: raise ValueError('固定項目表單必須指定操作者')
@@ -362,7 +344,7 @@ class Spending(commands.Cog):
 
     async def show_fixed(self,ctx):
         await self.prepare(ctx)
-        data = fixed_data(str(ctx.author.id))
+        data = life_service.get_fixed_burdens(str(ctx.author.id))
         lines = [f"📅 {data['month']} 已列入的固定負擔：{number(data['total'])} 元"]
         for item in data['entries']:
             lines.append(f"支出 #{item['id']} {item['note']} {number(item['amount'])} 元"+('（已撤銷，不計入）' if item['voided'] else ''))
@@ -460,7 +442,7 @@ class Spending(commands.Cog):
             elif plan['intent']=='fixed':
                 if plan['month'] and plan['month'] != sp.today().strftime('%Y-%m'):
                     raise ValueError('固定負擔查詢目前限本月；歷史支出請查指定月份月報')
-                data = fixed_data(user_id)
+                data = life_service.get_fixed_burdens(user_id)
             elif plan['intent']=='holdings':
                 data = await self.stock_snapshot(user_id)
                 await self.add_funds(ctx,data)

@@ -109,9 +109,9 @@ def month_items(user_id,future=False,recurring=False):
     for _ in range(36):
         months.add(cursor.strftime('%Y-%m'))
         cursor=(cursor-timedelta(days=1)).replace(day=1)
-    for row in sp.rows('SELECT DISTINCT substr(spent_on,1,7) AS month FROM expenses WHERE user_id=? UNION SELECT month FROM budgets WHERE user_id=?',(str(user_id),str(user_id))):
-        if future or row['month']<=current.strftime('%Y-%m'):
-            months.add(row['month'])
+    for month in life_service.get_recorded_months(user_id):
+        if future or month<=current.strftime('%Y-%m'):
+            months.add(month)
     if future:
         cursor=current
         for _ in range(12):

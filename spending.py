@@ -263,6 +263,18 @@ def list_expenses(user_id, month, include_voided=False, limit=None, offset=0):
     return {'items': rows(sql, page_args), 'total': total}
 
 
+def recurring_expenses(user_id):
+    return rows('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id DESC', (user_id,))
+
+
+def recorded_months(user_id):
+    return [row['month'] for row in rows(
+        'SELECT DISTINCT substr(spent_on,1,7) AS month FROM expenses WHERE user_id=? '
+        'UNION SELECT month FROM budgets WHERE user_id=? ORDER BY month',
+        (user_id, user_id),
+    )]
+
+
 def alerts(conn, user_id, month):
     setting = conn.execute('SELECT levels FROM spending_settings WHERE user_id=?',(user_id,)).fetchone()
     levels = json.loads(setting[0]) if setting else [80,100]
@@ -341,6 +353,28 @@ def void_expense(user_id, key, expected_revision=None):
         )
         if changed.rowcount != 1:
             raise ValueError('找不到自己的有效消費')
+
+
+def fixed_burdens(user_id):
+    rules = rows('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id', (user_id,))
+    month = today().strftime('%Y-%m')
+    entries = rows(
+        "SELECT id,note,cents,source,voided FROM expenses "
+        "WHERE user_id=? AND period=? AND kind='consumption' ORDER BY id",
+        (user_id, month),
+    )
+    for rule in rules:
+        rule.pop('user_id', None)
+        rule['monthly_amount'] = rule.pop('cents') / 100
+        if rule['periods']:
+            start = month_date(rule['start_month'])
+            elapsed = max(0, (today().year - start.year) * 12 + today().month - start.month + 1)
+            rule['current_period'] = min(elapsed, rule['periods'])
+            rule['remaining_periods'] = max(0, rule['periods'] - elapsed)
+            rule['remaining_scheduled_amount'] = rule['remaining_periods'] * rule['monthly_amount']
+    for entry in entries:
+        entry['amount'] = entry.pop('cents') / 100
+    return dict(month=month, rules=rules, entries=entries, total=sum(e['amount'] for e in entries if not e['voided']))
 
 
 def undo(user_id, confirm=None):

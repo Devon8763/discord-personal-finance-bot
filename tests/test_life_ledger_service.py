@@ -79,6 +79,42 @@ class LifeLedgerServiceTests(unittest.TestCase):
         self.assertIn(source, [row["id"] for row in sources])
         self.assertNotIn(source, [row["id"] for row in service.get_payment_sources(43)])
 
+    def test_expense_rows_use_service_status_origin_and_entry_type(self):
+        expense_id = service.add_expense(42, 30, "餐飲", "晚餐", "2026-09-03")
+        active = service.get_expense(42, expense_id)
+        self.assertEqual(
+            (active["status"], active["origin"], active["entry_type"]),
+            ("active", "manual", "consumption"),
+        )
+        service.void_expense(42, expense_id)
+        historical = service.list_expenses(42, "2026-09", include_voided=True)["items"]
+        self.assertEqual(
+            (historical[0]["status"], historical[0]["origin"], historical[0]["entry_type"]),
+            ("voided", "manual", "consumption"),
+        )
+
+    def test_fixed_burdens_are_scoped_and_use_service_expense_semantics(self):
+        sp.add_recurring("42", "固定", "房租", 8000, "居住", "2026-09")
+        sp.add_recurring("43", "固定", "他人房租", 9000, "居住", "2026-09")
+        sp.sync_recurring("42")
+        sp.sync_recurring("43")
+        data = service.get_fixed_burdens(42)
+        self.assertEqual([rule["name"] for rule in data["rules"]], ["房租"])
+        self.assertEqual(data["total"], 8000)
+        self.assertEqual(
+            (data["entries"][0]["status"], data["entries"][0]["origin"], data["entries"][0]["entry_type"]),
+            ("active", "固定", "consumption"),
+        )
+
+    def test_recurring_rules_and_recorded_months_are_owner_scoped(self):
+        own_rule = sp.add_recurring("42", "訂閱", "影音", 390, "娛樂", "2026-09")
+        sp.add_recurring("43", "訂閱", "他人影音", 390, "娛樂", "2026-09")
+        service.add_expense(42, 50, "餐飲", "八月", "2026-08-01")
+        service.add_expense(43, 50, "餐飲", "他人七月", "2026-07-01")
+        sp.set_budget("42", "2026-10", "總額", 1000)
+        self.assertEqual([row["id"] for row in service.get_recurring_expenses(42)], [own_rule])
+        self.assertEqual(service.get_recorded_months(42), ["2026-08", "2026-10"])
+
     def test_void_is_soft_and_active_reads_exclude_it(self):
         expense_id = service.add_expense(42, 30, "餐飲", "晚餐", "2026-09-03")
         service.void_expense(42, expense_id, expected_revision=0)

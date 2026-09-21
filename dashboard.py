@@ -58,7 +58,7 @@ def card(user_id,month,tab,page=0):
             embed.description='尚未設定預算。先設定「總額」，再設定各分類。'
         embed.add_field(name='提醒門檻',value='／'.join(f'{v}%' for v in sp.reminder_levels(user_id)),inline=False)
     elif tab=='固定負擔':
-        rules=sp.rows('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id DESC',(user_id,))
+        rules=life_service.get_recurring_expenses(user_id)
         pages=max(1,(len(rules)+4)//5)
         page=min(max(0,page),pages-1)
         embed.description=f"本月已列入 **{number(report['fixed'])} 元**"
