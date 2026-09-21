@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace, ModuleType
 from unittest.mock import AsyncMock, patch
 import db
+import life_ledger_service as life_service
 import spending as sp
 
 AVAILABLE = importlib.util.find_spec('discord') is not None
@@ -144,4 +145,8 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                     self.assertGreater(delivered_count,0)
                     await cog.monthly()
                     self.assertEqual(recipient.send.await_count,delivered_count)
+                expense_id = life_service.add_expense('42',10,'餐飲','撤銷歷史',sp.today().isoformat())
+                life_service.void_expense('42',expense_id)
+                details = await command(f'!支出明細 {month}')
+                self.assertIn('（已撤銷）',details.send.await_args.args[0])
                 await client.remove_cog('Spending')

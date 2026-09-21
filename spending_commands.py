@@ -5,6 +5,7 @@ import json
 import discord
 from form_ui import InlineForm
 from discord.ext import commands, tasks
+import life_ledger_service as life_service
 import spending as sp
 from ai import complete
 from ai_consent import ensure_consent
@@ -263,8 +264,8 @@ class Spending(commands.Cog):
     @commands.command(name='分類清單')
     async def categories(self,ctx):
         user_id = str(ctx.author.id)
-        active = sp.category_names(user_id)
-        inactive = [n for n in sp.category_names(user_id,True) if n not in active]
+        active = life_service.get_categories(user_id)
+        inactive = [n for n in life_service.get_categories(user_id,include_inactive=True) if n not in active]
         await send(ctx,'📂 啟用分類\n'+('、'.join(active) or '尚無分類，請用 !分類新增')+('\n\n已停用（歷史保留）：'+ '、'.join(inactive) if inactive else ''))
 
     @commands.command(name='分類新增')
@@ -298,28 +299,32 @@ class Spending(commands.Cog):
     @commands.command(name='支出')
     async def expense(self,ctx,amount:str,cat:str,*,note:str):
         await self.prepare(ctx)
-        key = sp.add(str(ctx.author.id),amount,cat,note)
+        key = life_service.add_expense(str(ctx.author.id),amount,cat,note)
         await ctx.send(f'✅ 支出 #{key} 已記錄：{cat} {number(amount)} 元；!記帳撤銷 可還原')
         await self.notify(ctx)
 
     @commands.command(name='支出補登')
     async def backdate(self,ctx,on:str,amount:str,cat:str,*,note:str):
         await self.prepare(ctx)
-        key = sp.add(str(ctx.author.id),amount,cat,note,on)
+        key = life_service.add_expense(str(ctx.author.id),amount,cat,note,on)
         await ctx.send(f'✅ 支出 #{key} 已補登 {on}')
         await self.notify(ctx)
 
     @commands.command(name='支出修改')
     async def edit(self,ctx,key:int,on:str,amount:str,cat:str,*,note:str):
         await self.prepare(ctx)
-        sp.edit(str(ctx.author.id),key,amount,cat,note,on)
+        life_service.update_expense(str(ctx.author.id),key,amount,cat,note,on)
         await ctx.send(f'✅ 已修改支出 #{key}；未來固定項目金額不受此單筆修改影響')
         await self.notify(ctx)
 
     @commands.command(name='記帳撤銷')
     async def undo(self,ctx,confirm:int=None):
         await self.prepare(ctx)
-        action,key = sp.undo(str(ctx.author.id),confirm)
+        if confirm is None:
+            result = life_service.preview_undo(str(ctx.author.id))
+        else:
+            result = life_service.undo_latest_action(str(ctx.author.id),confirm)
+        action,key = result['action_id'],result['expense_id']
         await ctx.send(f'確認還原支出 #{key} 的最近操作，請輸入 !記帳撤銷 {action}' if confirm is None else f'✅ 操作 #{action} 已撤銷；自動項目本月不會重複補記')
 
     @commands.command(name='預算')
@@ -332,7 +337,7 @@ class Spending(commands.Cog):
     @commands.command(name='月報')
     async def month(self,ctx,month:str=None):
         await self.prepare(ctx)
-        await send(ctx,format_report(sp.month_report(str(ctx.author.id),month)))
+        await send(ctx,format_report(life_service.get_month_summary(str(ctx.author.id),month)))
 
     @commands.command(name='支出明細')
     async def details(self,ctx,month:str=None,page:int=1):
@@ -341,7 +346,8 @@ class Spending(commands.Cog):
         sp.month_date(month)
         if page < 1:
             raise ValueError('頁數需大於零')
-        entries = sp.rows("SELECT * FROM expenses WHERE user_id=? AND substr(spent_on,1,7)=? AND kind='consumption' ORDER BY spent_on DESC,id DESC LIMIT 20 OFFSET ?", (str(ctx.author.id),month,(page-1)*20))
+        listing = life_service.list_expenses(str(ctx.author.id),month,include_voided=True,limit=20,offset=(page-1)*20)
+        entries = listing['items']
         lines = [f'🧾 {month} 第 {page} 頁（每頁20筆）']
         for row in entries:
             lines.append(f"#{row['id']} {row['spent_on']} {row['category']} {number(row['cents']/100)} 元｜{row['note']}｜付款來源：{row['payment_source_name']}｜{row['source']}"+('（已撤銷）' if row['voided'] else ''))
