@@ -100,64 +100,6 @@ def rows(sql, args=()):
         conn.close()
 
 
-def init_schema(conn):
-    conn.executescript('''
-    CREATE TABLE IF NOT EXISTS spending_categories(user_id TEXT NOT NULL,name TEXT NOT NULL,active INTEGER NOT NULL,PRIMARY KEY(user_id,name));
-    CREATE TABLE IF NOT EXISTS spending_settings(user_id TEXT PRIMARY KEY,levels TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS spending_onboarding(user_id TEXT PRIMARY KEY);
-    CREATE TABLE IF NOT EXISTS spending_users(user_id TEXT PRIMARY KEY, started TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS expenses(
-      id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, spent_on TEXT NOT NULL,
-      cents INTEGER NOT NULL, category TEXT NOT NULL, note TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'manual', recurring_id INTEGER, period TEXT,
-      voided INTEGER NOT NULL DEFAULT 0, UNIQUE(recurring_id,period));
-    CREATE INDEX IF NOT EXISTS expenses_user_date ON expenses(user_id,spent_on);
-    CREATE TABLE IF NOT EXISTS expense_actions(
-      id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,expense_id INTEGER NOT NULL,
-      before_json TEXT NOT NULL,undone INTEGER NOT NULL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS budgets(
-      user_id TEXT NOT NULL,month TEXT NOT NULL,category TEXT NOT NULL,cents INTEGER NOT NULL,
-      PRIMARY KEY(user_id,month,category));
-    CREATE TABLE IF NOT EXISTS recurring_expenses(
-      id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,name TEXT NOT NULL,
-      cents INTEGER NOT NULL,category TEXT NOT NULL,kind TEXT NOT NULL,
-      start_month TEXT NOT NULL,periods INTEGER NOT NULL,due_day INTEGER,
-      active INTEGER NOT NULL DEFAULT 1);
-    CREATE TABLE IF NOT EXISTS spending_notices(
-      id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,notice_key TEXT NOT NULL,
-      body TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0,UNIQUE(user_id,notice_key));
-    ''')
-    # Additive, repeatable upgrade. Old action JSON is handled by undo defaults.
-    conn.execute('BEGIN IMMEDIATE')
-    try:
-        columns = {r[1] for r in conn.execute('PRAGMA table_info(expenses)')}
-        for name, definition in (
-            ('payment_source_id', 'INTEGER'),
-            ('payment_source_name', "TEXT NOT NULL DEFAULT '未指定'"),
-            ('kind', "TEXT NOT NULL DEFAULT 'consumption'"),
-            ('revision', 'INTEGER NOT NULL DEFAULT 0'),
-        ):
-            if name not in columns:
-                conn.execute(f'ALTER TABLE expenses ADD COLUMN {name} {definition}')
-        conn.execute('''CREATE TABLE IF NOT EXISTS payment_sources(
-            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
-            name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
-            UNIQUE(user_id,name))''')
-        conn.execute('CREATE INDEX IF NOT EXISTS payment_sources_user_active ON payment_sources(user_id,active,id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS expenses_user_kind_date ON expenses(user_id,kind,voided,spent_on,id)')
-        conn.execute('''CREATE TABLE IF NOT EXISTS spending_shortcuts(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,name TEXT NOT NULL,
-            category TEXT NOT NULL,payment_source_id INTEGER NOT NULL,note TEXT NOT NULL,
-            cents INTEGER,position INTEGER NOT NULL,active INTEGER NOT NULL DEFAULT 1)''')
-        conn.execute('CREATE INDEX IF NOT EXISTS shortcuts_user_order ON spending_shortcuts(user_id,active,position,id)')
-        for (user_id,) in conn.execute('SELECT user_id FROM spending_users UNION SELECT user_id FROM expenses').fetchall():
-            ensure_payment_sources(conn, user_id)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-
-
 def register(conn, user_id):
     conn.execute('INSERT OR IGNORE INTO spending_users VALUES(?,?)', (user_id, today().isoformat()))
     ensure_payment_sources(conn, user_id)
