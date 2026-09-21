@@ -9,7 +9,7 @@ import spending as sp
 import db
 import discord
 import sys
-from types import SimpleNamespace, ModuleType
+from types import ModuleType
 
 
 class RoundTwoData(unittest.TestCase):
@@ -114,7 +114,6 @@ class RoundTwoUI(unittest.IsolatedAsyncioTestCase):
         from lifestyle_ui import Shortcuts,ShortcutForm
         from test_shortcut_dropdowns import selections
         picker=Shortcuts(self.view)
-        cash=next(p['id'] for p in sp.payment_sources('42') if p['name']=='現金')
         form=ShortcutForm(picker)
         fill(form.fields['category'],'餐飲');fill(form.fields['payment'],'現金')
         for name,value in dict(name='早餐',note='蛋餅',amount='').items():

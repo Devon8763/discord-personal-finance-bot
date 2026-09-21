@@ -1,6 +1,5 @@
 from form_helpers import fill
 """Offline integration: real discord.py parsing, no login or real database."""
-import asyncio
 import importlib.util
 import json
 import sys

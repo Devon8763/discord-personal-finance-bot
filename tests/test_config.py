@@ -14,7 +14,9 @@ class TokenTests(unittest.TestCase):
         module = ast.Module(body=[main], type_ignores=[])
         bot = Mock()
         init_db = Mock()
-        with patch('config.load_token', return_value='fake-test-value') as loader:
+        def run(bot,initialize,token):
+            initialize();bot.run(token)
+        with patch('config.load_token', return_value='fake-test-value') as loader, patch('service_safety.run_protected',side_effect=run):
             exec(compile(module, 'bot.py', 'exec'), {'__name__': '__main__', 'bot': bot, 'init_db': init_db})
         loader.assert_called_once_with()
         init_db.assert_called_once_with()

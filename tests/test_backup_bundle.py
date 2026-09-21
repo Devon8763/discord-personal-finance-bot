@@ -1,5 +1,4 @@
 import io
-import json
 import unittest
 import zipfile
 from unittest.mock import patch
@@ -10,6 +9,38 @@ import test_phase1_ui as fixtures
 
 class BundleTests(unittest.IsolatedAsyncioTestCase):
     setUp=fixtures.PhaseOneUI.setUp
+
+    async def test_private_export_entry_uses_full_data_name(self):
+        from life_privacy import PrivacyView
+        from unittest.mock import AsyncMock
+        view=PrivacyView(self.view)
+        button=next(b for b in view.children if b.label=='匯出我的資料')
+        with patch('life_privacy.send_export',new_callable=AsyncMock) as send:
+            await button.callback(interaction(43))
+            event=interaction();event.guild=object()
+            await button.callback(event)
+            send.assert_not_awaited()
+            event=interaction();await button.callback(event)
+            send.assert_awaited_once_with(event)
+
+    async def test_export_rejects_data_that_cannot_be_imported(self):
+        from backup_bundle import export_bundle,snapshot
+        self.seed()
+        conn=sp.get_conn()
+        try:bundle=snapshot(conn,'42')
+        finally:conn.close()
+        bundle['expenses']=bundle['expenses']*10001
+        with patch('backup_bundle.snapshot',return_value=bundle):
+            with self.assertRaises(ValueError):export_bundle('42')
+
+    async def test_export_validation_failure_sends_safe_private_error_without_attachment(self):
+        from life_privacy import send_export
+        event=interaction()
+        with patch('life_privacy.export_life',side_effect=ValueError('SECRET purpose amount')):
+            await send_export(event)
+        self.assertTrue(event.followup.send.await_args.kwargs['ephemeral'])
+        self.assertNotIn('file',event.followup.send.await_args.kwargs)
+        self.assertNotIn('SECRET',event.followup.send.await_args.args[0])
 
     def seed(self,user='42'):
         source=sp.add_payment_source(user,'卡片')

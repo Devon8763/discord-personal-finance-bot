@@ -98,7 +98,7 @@ class SpendingTests(unittest.TestCase):
         self.assertIn('100%',sp.notices('a')[0]['body'])
 
     def test_recurring_restart_catchup_finish_and_undo(self):
-        key = sp.add_recurring('a','分期','筆電','3000','購物','2026-09',3,5)
+        sp.add_recurring('a','分期','筆電','3000','購物','2026-09',3,5)
         self.assertEqual(sp.sync_recurring('a'),1)
         self.assertEqual(sp.sync_recurring('a'),0)
         self.assertEqual(sp.month_report('a')['fixed'],3000)

@@ -2,7 +2,6 @@
 import asyncio
 import time
 import json
-from datetime import timedelta
 import discord
 from form_ui import InlineForm
 from discord.ext import commands, tasks

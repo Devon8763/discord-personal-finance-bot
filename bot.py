@@ -1,16 +1,17 @@
 from presentation import number
-from privacy_rules import can_run_in_channel
+from privacy_rules import can_run_in_channel,private_interaction
 from ledger import trade, history, undo as undo_trade, save_fund_price
 from message_input import process_message, display_time
 import discord
 from discord.ext import commands
 from db import get_conn, init_db
 from scraper import get_price as fetch_price
-from portfolio import normalize_symbol, positive, value_position
+from portfolio import normalize_symbol, value_position
 from ai import analyze
+from ai_consent import ensure_consent
 import asyncio
-import os
 import time
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -40,12 +41,31 @@ class SpacedContext(commands.Context):
 
 
 class InvestmentBot(commands.Bot):
+    async def process_spending_batch(self, message, lines):
+        await self.get_cog('Spending').process_batch(message, lines)
+
     async def setup_hook(self):
         from spending_commands import Spending
         await self.add_cog(Spending(self, stock_snapshot, add_funds, InteractionContext))
+        if getattr(self,'safety',None) is not None:
+            from service_safety import monitor
+            self.safety_task=asyncio.create_task(monitor(self,self.safety,self.admin_id))
+        try:
+            await self.tree.sync()
+            print('指令清單已同步，舊版生活斜線入口已移除；請使用 !help → 生活記帳。')
+        except Exception:
+            print('指令清單同步未完成，舊版斜線入口可能暫時殘留；請使用 !help 或 !記帳說明，稍後重新啟動。')
 
     async def get_context(self, origin, /, *, cls=SpacedContext):
         return await super().get_context(origin, cls=cls)
+
+    async def close(self):
+        task=getattr(self,'safety_task',None)
+        if task:
+            task.cancel()
+            try:await task
+            except asyncio.CancelledError:pass
+        await super().close()
 
 
 bot = InvestmentBot(
@@ -58,7 +78,7 @@ bot = InvestmentBot(
 async def private_financial_commands(ctx):
     if can_run_in_channel(ctx.command.name,ctx.guild):
         return True
-    await ctx.send('🔒 帳務指令請私訊機器人，或輸入 !help 使用僅本人可見的操作面板。請勿在公開頻道貼上帳目。')
+    await ctx.send('🔒 財務與資料操作僅限私訊；請私訊 Bot 後輸入 !help。請勿在公開頻道貼上帳目。')
     return False
 print("程式開始")
 print("BOT starting")
@@ -66,6 +86,13 @@ print("BOT starting")
 @bot.event
 async def on_message(message):
     await process_message(bot, message)
+
+@bot.event
+async def on_error(event_method, *args, **kwargs):
+    # Discord's default handler logs the traceback and exception message.
+    error_type = sys.exc_info()[0]
+    print(datetime.now(timezone.utc).isoformat(), 'Discord event failed:',
+          error_type.__name__ if error_type else 'UnknownError')
 
 class HelpView(discord.ui.View):
     def __init__(self):
@@ -81,9 +108,7 @@ class HelpView(discord.ui.View):
 
         embed.add_field(
             name="📌 快速開始",
-            value="""1️⃣ `!watch`
-2️⃣ `!buy`
-3️⃣ `!portfolio`""",
+            value="點「生活記帳」開啟生活看板，再按「＋記一筆消費」填表。\n投資摘要請至「投資紀錄 → AI」；文字指令仍可使用。",
             inline=False
         )
 
@@ -102,19 +127,15 @@ class HelpView(discord.ui.View):
         view = MainHelpView()
         await interaction.response.edit_message(embed=view.main_embed(), view=view)
 
-    @discord.ui.button(label="🤖 AI 摘要", style=discord.ButtonStyle.success, row=1)
-    async def ai_summary(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        await run_analysis(InteractionContext(interaction))
-
     @discord.ui.button(label="💰 生活記帳", style=discord.ButtonStyle.primary, row=1)
     async def spending(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from spending_commands import SpendingView
+        from dashboard import open_dashboard
         cog = bot.get_cog('Spending')
-        await interaction.response.send_message(embed=cog.help_embed(), view=SpendingView(cog), ephemeral=True)
+        await open_dashboard(cog, interaction)
 
     @discord.ui.button(label="📈 投資紀錄", style=discord.ButtonStyle.secondary, row=1)
     async def investments(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await private_interaction(interaction):return
         from investment_ui import InvestmentPanel
         import sys
         view = InvestmentPanel(sys.modules[__name__],interaction.user.id)
@@ -201,7 +222,7 @@ class MainHelpView(HelpView):
     def __init__(self):
         super().__init__()
         for item in list(self.children):
-            if item.label not in ('📈 投資紀錄','💰 生活記帳','🤖 AI 摘要'):
+            if item.label not in ('📈 投資紀錄','💰 生活記帳'):
                 self.remove_item(item)
 
 
@@ -230,7 +251,7 @@ async def help(ctx, category=None):
         await ctx.send("📊 投資組合：!portfolio")
 
     elif category == "ai":
-        await ctx.send("🤖 點擊 !help 的 AI 摘要按鈕，或輸入 !分析／!analyze。按鈕結果僅點擊者可見，使用點擊者自己的持倉。")
+        await ctx.send("🤖 請至投資紀錄 → AI 使用摘要，或私訊 !分析／!analyze；僅分析自己的持倉。")
 
     else:
         await ctx.send("❌ 找不到分類")
@@ -243,7 +264,7 @@ async def privacy(ctx):
 
 ✔ 儲存主動輸入的投資、生活支出、用途、預算與固定項目
 ✔ 帳目存於機器人主機，依 Discord 使用者隔離；不保存一般聊天
-✔ 帳務指令限私訊，伺服器請用 !help 開啟私人表單
+✔ 財務與資料操作限Bot私訊，伺服器僅提供操作說明
 ℹ️ Discord 仍會接收訊息與表單；本機資料庫未加密，主機管理者可讀取
 
 🧹 !clear yes 刪除投資資料；!生活清除 yes 刪除生活資料
@@ -317,8 +338,6 @@ async def guide(ctx):
     embed.set_footer(text="💡 建議私訊使用，體驗最佳")
 
     await ctx.send(embed=embed)
-import math
-
 # ========================
 # 📊 price
 # ========================
@@ -656,6 +675,7 @@ async def analysis(ctx):
 
 
 async def build_analysis(ctx):
+    if not await ensure_consent(ctx): return
     snapshot = await stock_snapshot(str(ctx.author.id))
     await add_funds(ctx, snapshot)
     await send_snapshot(ctx, snapshot)
@@ -694,8 +714,8 @@ if __name__ == '__main__':
         token = load_token()
     except (ValueError, OSError) as error:
         raise SystemExit(str(error))
-    init_db()
     try:
-        bot.run(token)
+        from service_safety import run_protected
+        run_protected(bot,init_db,token)
     except discord.LoginFailure:
         raise SystemExit('Discord 不接受此 Token。請更新 token.txt；若終端曾設定 DISCORD_TOKEN，請先執行 Remove-Item Env:DISCORD_TOKEN -ErrorAction SilentlyContinue 再啟動。')

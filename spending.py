@@ -258,13 +258,14 @@ def alerts(conn, user_id, month):
 
 
 def add(user_id, amount, cat, note, on=None, payment_source_id=None):
-    cents, cat = money(amount), category(cat,user_id)
+    cents = money(amount)
     day = date.fromisoformat(on) if on else today()
     if day > today():
         raise ValueError('日常支出不能填未來日期；固定負擔請用 !固定新增')
     if not note.strip() or len(note) > 200:
         raise ValueError('用途需為 1～200 字')
     with transaction() as conn:
+        category(cat,user_id)
         register(conn, user_id)
         source_id, source_name = resolve_payment(conn, user_id, payment_source_id)
         key = conn.execute("INSERT INTO expenses(user_id,spent_on,cents,category,note,payment_source_id,payment_source_name,kind) VALUES(?,?,?,?,?,?,?,'consumption')", (user_id, day.isoformat(), cents, cat, note, source_id, source_name)).lastrowid
@@ -316,9 +317,9 @@ def undo(user_id, confirm=None):
 def set_budget(user_id, month, cat, amount):
     month_date(month)
     cents = money(amount)
-    if cat != '總額':
-        category(cat,user_id)
     with transaction() as conn:
+        if cat != '總額':
+            category(cat,user_id)
         register(conn, user_id)
         existing = dict(conn.execute('SELECT category,cents FROM budgets WHERE user_id=? AND month=?', (user_id, month)).fetchall())
         existing[cat] = cents
@@ -343,8 +344,9 @@ def add_recurring(user_id, kind, name, amount, cat, start, periods=0, due_day=No
         raise ValueError('付款日需 1～31，短月以月底為準；僅作備註')
     if not name.strip() or len(name) > 100:
         raise ValueError('項目名稱需 1～100 字')
-    cents, cat = money(amount), category(cat,user_id)
+    cents = money(amount)
     with transaction() as conn:
+        category(cat,user_id)
         register(conn, user_id)
         return conn.execute('INSERT INTO recurring_expenses(user_id,name,cents,category,kind,start_month,periods,due_day) VALUES(?,?,?,?,?,?,?,?)', (user_id,name,cents,cat,kind,start,periods,due_day)).lastrowid
 
@@ -496,7 +498,10 @@ def delivered(key, user_id):
 
 
 def clear(user_id):
+    from service_safety import record_deletion
+    import db
     with transaction() as conn:
+        record_deletion(conn,user_id,db.DB_NAME)
         for table in ('expenses','expense_actions','budgets','recurring_expenses','spending_notices','spending_users','spending_categories','spending_settings','payment_sources','spending_shortcuts','spending_onboarding'):
             conn.execute(f'DELETE FROM {table} WHERE user_id=?', (user_id,))
 
@@ -515,11 +520,11 @@ def shortcut(user_id, key):
 
 def save_shortcut(user_id, name, cat, payment_source_id, note, amount=None, key=None):
     name=payment_name(name)
-    category(cat,user_id)
     if not note.strip() or len(note)>200:
         raise ValueError('用途需為1～200字')
     cents=money(amount) if amount is not None and str(amount).strip() else None
     with transaction() as conn:
+        category(cat,user_id)
         register(conn,user_id)
         source_id,_=resolve_payment(conn,user_id,payment_source_id)
         if key is None:

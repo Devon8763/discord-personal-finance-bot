@@ -112,7 +112,7 @@ class PhaseOneUI(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sp.get_expense('42', key), before)
 
     async def test_source_management_and_large_chart_pagination_private(self):
-        from selection_ui import PaymentPicker, NewPaymentSource
+        from selection_ui import PaymentPicker
         from dashboard import Charts
         picker = PaymentPicker(42, manage=True)
         for n in range(31):
@@ -166,7 +166,7 @@ class PhaseOneUI(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(i.response.send_modal.await_args.args[0].expense['id'], 1)
 
     async def test_date_pagination_and_cash_unspecified_quick_choices(self):
-        from selection_ui import choose_date, PaymentPicker
+        from selection_ui import choose_date
         i = interaction()
         await choose_date(i, AsyncMock())
         picker = i.response.send_message.await_args.kwargs['view']

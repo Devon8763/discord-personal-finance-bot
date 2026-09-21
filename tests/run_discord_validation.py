@@ -1,4 +1,5 @@
 """Run offline tests with the optional isolated validation dependencies."""
+import importlib
 import sys
 import unittest
 from pathlib import Path
@@ -6,7 +7,7 @@ root = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(root))
 # Prefer installed dependencies; fall back to an existing local package directory.
 try:
-    from discord.ext import commands
+    importlib.import_module('discord.ext.commands')
 except ImportError:
     for directory in (root / '.venv/Lib/site-packages', root / '.validation-packages'):
         try:
@@ -19,7 +20,7 @@ except ImportError:
     for name in list(sys.modules):
         if name == 'discord' or name.startswith('discord.'):
             del sys.modules[name]
-    from discord.ext import commands
+    importlib.import_module('discord.ext.commands')
 
 import db
 production = Path(db.DB_NAME).resolve()

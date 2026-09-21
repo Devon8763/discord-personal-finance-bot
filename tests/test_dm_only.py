@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock,patch
+from unittest.mock import AsyncMock
 from types import SimpleNamespace
 import test_phase1_ui as fixtures
 from test_phase1_ui import interaction
