@@ -85,7 +85,7 @@ def get_payment_sources(user_id, include_inactive=False) -> list[dict]: ...
 def get_recent_expenses(user_id) -> list[dict]: ...
 ```
 
-`list_expenses()` 回傳 `{"items": [...], "total": n}`。預設只回傳有效 `consumption`；`include_voided=True` 僅供既有 Discord `!支出明細` 保留已撤銷歷史。`limit=None` 回傳符合條件的全部項目；`limit` 與 `offset` 只接受非負整數，避免 UI 自行組 SQL。
+`list_expenses()` 回傳 `{"items": [...], "total": n}`。預設只回傳有效 `consumption`；`include_voided=True` 僅供既有 Discord 看板「清單」與 `!支出明細` 保留已撤銷歷史。`limit=None` 回傳符合條件的全部項目；`limit` 與 `offset` 只接受非負整數，避免 UI 自行組 SQL。
 
 `preview_undo()` 回傳 `{"action_id": ..., "expense_id": ...}`。`undo_latest_action()` 保留只能撤銷本人最新可撤銷操作的規則；傳入 `expected_action_id` 時必須與目前最新操作相同。兩者不接受任意消費編號來繞過操作順序。
 
@@ -122,7 +122,7 @@ def get_recent_expenses(user_id) -> list[dict]: ...
 
 - 一般列表：只包含 `voided=0`、`kind='consumption'`，依日期與編號由新到舊。
 - 搜尋：保留只搜尋本人有效手動消費的現況。
-- Discord `!支出明細`：明確使用 `include_voided=True`，維持目前顯示已撤銷歷史的結果。
+- Discord 看板「清單」與 `!支出明細`：明確使用 `include_voided=True`，維持目前顯示已撤銷歷史的結果。
 - 月曆、摘要與圖表：沿用既有 `voided=0` 條件，不顯示或統計已撤銷帳目。
 - 單筆讀取：只回傳本人有效生活消費。
 
