@@ -4,6 +4,22 @@
 
 依使用者於2026-09-10調整的規則：大型更新遞增 `0.X.0`，小型新增、介面調整與修錯遞增 `0.X.Y`。歷史版本重新編號，原編號保留於標題供對照；歷史功能與驗證紀錄不變。
 
+## 0.11.0 — 2026-09-21
+
+### 生活消費 Services 層
+
+- 新增 `life_ledger_service.py`，提供不依賴Discord物件的生活消費介面：`add_expense`、`get_expense`、`list_expenses`、`search_expenses`、`update_expense`、`void_expense`、`preview_undo`、`undo_latest_action`、`get_calendar_days`、`get_month_summary`、`get_chart_data`、`get_categories`、`get_payment_sources`與`get_recent_expenses`。
+- 單筆讀取、修改與軟撤銷都同時使用 `user_id` 和消費編號，沿用既有分類／付款來源驗證、立即交易、rollback及revision衝突防護。`void_expense`在同一交易寫入既有操作紀錄並設為 `voided=1`；任一步失敗即回滾，不執行SQLite `DELETE`，仍可用既有「撤銷最近操作」規則復原。
+- 一般搜尋、帳目管理、月曆、摘要與圖表排除已撤銷帳目；原本會顯示歷史狀態的看板清單與 `!支出明細` 保留「已撤銷」標示。未新增Discord刪除按鈕或指令。
+- Discord消費表單、修改表單、搜尋、看板清單、月曆、圖表、最近再記、分類／付款來源選項及 `!支出`、`!支出補登`、`!支出修改`、`!記帳撤銷`、`!月報`、`!支出明細` 改由Services呼叫既有規則；使用者看到的指令、按鈕、文案與資料結果不變。預算、固定負擔、提醒、捷徑管理、AI、投資、備份／復原及匯入／匯出不在本輪範圍。
+- 新增10項直接呼叫Services的隔離測試，涵蓋新增、單筆讀取、搜尋、列表／分頁、跨使用者拒絕、修改版本衝突、軟撤銷、最新操作衝突、SQLite故障注入回滾、有效資料篩選、月曆／摘要／圖表及本人分類／付款來源。
+
+### 升級與驗證
+
+- 從0.10.2升級：停止Bot，依既有維護流程完成更新前備份，再更新程式並重新啟動。無新增正式或開發依賴、無資料庫結構遷移，既有資料與操作紀錄格式不變。
+- 使用Codex附帶Python 3.12.14與Ruff 0.16.8執行 `python -m ruff check .`，結果為 `All checks passed!`；完整 `tests/run_discord_validation.py` 174項隔離測試通過，使用暫存資料庫與Discord傳送替身。
+- 未讀取Token、未啟動正式Bot、未操作正式 `data.db`、真實備份、匯出檔或使用者資料。Discord桌面／手機真實互動、GitHub Actions雲端執行、未來Web／API、真實Ollama、正式資料庫升級與真實備份／匯出流程未實測。
+
 ## 0.10.2 — 2026-09-21
 
 ### Ruff與GitHub Actions開發驗證
