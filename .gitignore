@@ -35,6 +35,7 @@ env/
 .pytest_cache/
 .ruff_cache/
 .tmp/
+.worktrees/
 .coverage
 htmlcov/
 .mypy_cache/

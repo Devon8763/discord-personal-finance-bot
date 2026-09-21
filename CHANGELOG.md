@@ -11,7 +11,7 @@
 - 新增 `pyproject.toml` 與 `requirements-dev.txt`，固定使用Ruff 0.16.8、Python 3.12目標，只啟用語法錯誤與Pyflakes `F` 規則；不強制格式化、import排序或自動修正。明確排除正式資料、備份、匯出、上傳、日誌、虛擬環境、快取與測試暫存目錄。
 - 新增 `.github/workflows/ci.yml`；推送到 `main` 及對 `main` 的Pull Request觸發，只授予repository contents讀取權限。安裝既有正式依賴與Ruff後，依序執行 `python -m ruff check .` 與 `python tests/run_discord_validation.py`，不啟動正式Bot、不需要GitHub Secrets或測試環境變數。
 - Ruff首次檢查找到13個未使用import與2個未使用區域變數／賦值；全數人工做最小移除，未使用 `--fix`、大量ignore或風格整理。測試執行器仍保留discord.py載入確認與正式 `data.db` 連線防護。
-- README新增「開發驗證」章節與可直接執行的本機命令；`.gitignore`新增Ruff快取、本輪一次性驗證暫存目錄與Windows捷徑排除，不放寬Token、資料庫、備份、匯出或使用者資料規則。
+- README新增「開發驗證」章節與可直接執行的本機命令；`.gitignore`新增Ruff快取、本輪一次性驗證暫存目錄、隔離worktree與Windows捷徑排除，不放寬Token、資料庫、備份、匯出或使用者資料規則。
 
 ### 升級與驗證
 
