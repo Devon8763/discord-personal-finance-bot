@@ -241,6 +241,28 @@ def month_expenses(user_id, month):
                 (user_id, start.isoformat(), next_month(start).isoformat()))
 
 
+def list_expenses(user_id, month, include_voided=False, limit=None, offset=0):
+    if limit is not None and (type(limit) is not int or limit < 0):
+        raise ValueError('筆數需為非負整數')
+    if type(offset) is not int or offset < 0:
+        raise ValueError('起始位置需為非負整數')
+    start = month_date(month)
+    where = "user_id=? AND spent_on>=? AND spent_on<? AND kind='consumption'"
+    args = [str(user_id), start.isoformat(), next_month(start).isoformat()]
+    if not include_voided:
+        where += ' AND voided=0'
+    total = rows(f'SELECT COUNT(*) AS n FROM expenses WHERE {where}', args)[0]['n']
+    sql = f'SELECT * FROM expenses WHERE {where} ORDER BY spent_on DESC,id DESC'
+    page_args = list(args)
+    if limit is not None:
+        sql += ' LIMIT ? OFFSET ?'
+        page_args.extend((limit, offset))
+    elif offset:
+        sql += ' LIMIT -1 OFFSET ?'
+        page_args.append(offset)
+    return {'items': rows(sql, page_args), 'total': total}
+
+
 def alerts(conn, user_id, month):
     setting = conn.execute('SELECT levels FROM spending_settings WHERE user_id=?',(user_id,)).fetchone()
     levels = json.loads(setting[0]) if setting else [80,100]
