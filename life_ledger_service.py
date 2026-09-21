@@ -28,6 +28,24 @@ def update_expense(user_id, expense_id, amount, category, note, spent_on,
                    payment_source_id, expected_revision)
 
 
+def void_expense(user_id, expense_id, expected_revision=None):
+    return sp.void_expense(_user(user_id), expense_id, expected_revision)
+
+
+def preview_undo(user_id):
+    action_id, expense_id = sp.undo(_user(user_id))
+    return {'action_id': action_id, 'expense_id': expense_id}
+
+
+def undo_latest_action(user_id, expected_action_id=None):
+    owner = _user(user_id)
+    action_id = expected_action_id
+    if action_id is None:
+        action_id, _ = sp.undo(owner)
+    undone_action_id, expense_id = sp.undo(owner, action_id)
+    return {'action_id': undone_action_id, 'expense_id': expense_id}
+
+
 def get_calendar_days(user_id, month):
     return sp.calendar_days(_user(user_id), month)
 

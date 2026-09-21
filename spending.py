@@ -318,6 +318,31 @@ def edit(user_id, key, amount, cat, note, on, payment_source_id=None, expected_r
         alerts(conn, user_id, on[:7])
 
 
+def void_expense(user_id, key, expected_revision=None):
+    with transaction() as conn:
+        conn.row_factory = sqlite3.Row
+        old = conn.execute(
+            "SELECT * FROM expenses "
+            "WHERE user_id=? AND id=? AND voided=0 AND kind='consumption'",
+            (user_id, key),
+        ).fetchone()
+        if not old:
+            raise ValueError('找不到自己的有效消費')
+        if expected_revision is not None and old['revision'] != expected_revision:
+            raise ValueError('此筆帳目已變動，請重新選取後修改')
+        conn.execute(
+            'INSERT INTO expense_actions(user_id,expense_id,before_json) VALUES(?,?,?)',
+            (user_id, key, json.dumps(dict(old))),
+        )
+        changed = conn.execute(
+            "UPDATE expenses SET voided=1,revision=revision+1 "
+            "WHERE user_id=? AND id=? AND voided=0 AND kind='consumption'",
+            (user_id, key),
+        )
+        if changed.rowcount != 1:
+            raise ValueError('找不到自己的有效消費')
+
+
 def undo(user_id, confirm=None):
     with transaction() as conn:
         row = conn.execute('SELECT id,expense_id,before_json FROM expense_actions WHERE user_id=? AND undone=0 ORDER BY id DESC LIMIT 1', (user_id,)).fetchone()

@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from datetime import date
@@ -77,3 +78,94 @@ class LifeLedgerServiceTests(unittest.TestCase):
         self.assertTrue(all(isinstance(row, dict) for row in sources))
         self.assertIn(source, [row["id"] for row in sources])
         self.assertNotIn(source, [row["id"] for row in service.get_payment_sources(43)])
+
+    def test_void_is_soft_and_active_reads_exclude_it(self):
+        expense_id = service.add_expense(42, 30, "餐飲", "晚餐", "2026-09-03")
+        service.void_expense(42, expense_id, expected_revision=0)
+        stored = sp.rows("SELECT * FROM expenses WHERE id=? AND user_id=?", (expense_id, "42"))
+        self.assertEqual(len(stored), 1)
+        self.assertEqual((stored[0]["voided"], stored[0]["revision"]), (1, 1))
+        with self.assertRaises(ValueError):
+            service.get_expense(42, expense_id)
+        self.assertEqual(service.list_expenses(42, "2026-09")["items"], [])
+        self.assertEqual(
+            [row["id"] for row in service.list_expenses(42, "2026-09", include_voided=True)["items"]],
+            [expense_id],
+        )
+        self.assertEqual(service.search_expenses(42, "晚餐"), [])
+        self.assertEqual(sum(day["cents"] for day in service.get_calendar_days(42, "2026-09")), 0)
+        self.assertEqual(service.get_month_summary(42, "2026-09")["total"], 0)
+        self.assertEqual(service.get_chart_data(42, "2026-09")["categories"], [])
+
+    def test_void_rejects_other_owner_and_stale_revision_without_changes(self):
+        expense_id = service.add_expense(42, 30, "餐飲", "本人", "2026-09-03")
+        before = sp.rows("SELECT * FROM expenses ORDER BY id"), sp.rows(
+            "SELECT * FROM expense_actions ORDER BY id"
+        )
+        for user_id, revision in ((43, 0), (42, 99)):
+            with self.subTest(user_id=user_id, revision=revision), self.assertRaises(ValueError):
+                service.void_expense(user_id, expense_id, revision)
+            self.assertEqual(
+                (
+                    sp.rows("SELECT * FROM expenses ORDER BY id"),
+                    sp.rows("SELECT * FROM expense_actions ORDER BY id"),
+                ),
+                before,
+            )
+
+    def test_preview_and_undo_latest_restore_void(self):
+        expense_id = service.add_expense(42, 30, "餐飲", "晚餐", "2026-09-03")
+        service.void_expense(42, expense_id)
+        preview = service.preview_undo(42)
+        self.assertEqual(preview["expense_id"], expense_id)
+        with self.assertRaises(ValueError):
+            service.undo_latest_action(42, preview["action_id"] + 1)
+        self.assertEqual(sp.rows("SELECT voided FROM expenses WHERE id=?", (expense_id,))[0]["voided"], 1)
+        result = service.undo_latest_action(42, preview["action_id"])
+        self.assertEqual(result, preview)
+        self.assertEqual(service.get_expense(42, expense_id)["voided"], 0)
+
+    def test_void_write_failures_roll_back_action_and_expense(self):
+        expense_id = service.add_expense(42, 30, "餐飲", "晚餐", "2026-09-03")
+        for table, event in (("expense_actions", "INSERT"), ("expenses", "UPDATE")):
+            before = sp.rows("SELECT * FROM expenses ORDER BY id"), sp.rows(
+                "SELECT * FROM expense_actions ORDER BY id"
+            )
+            with sp.transaction() as conn:
+                conn.execute(
+                    f"CREATE TRIGGER fail_void BEFORE {event} ON {table} "
+                    "BEGIN SELECT RAISE(ABORT,'private detail'); END"
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                service.void_expense(42, expense_id)
+            self.assertEqual(
+                (
+                    sp.rows("SELECT * FROM expenses ORDER BY id"),
+                    sp.rows("SELECT * FROM expense_actions ORDER BY id"),
+                ),
+                before,
+            )
+            with sp.transaction() as conn:
+                conn.execute("DROP TRIGGER fail_void")
+
+    def test_undo_completion_failure_rolls_back_expense_restore(self):
+        expense_id = service.add_expense(42, 30, "餐飲", "晚餐", "2026-09-03")
+        service.void_expense(42, expense_id)
+        action_id = service.preview_undo(42)["action_id"]
+        before = sp.rows("SELECT * FROM expenses ORDER BY id"), sp.rows(
+            "SELECT * FROM expense_actions ORDER BY id"
+        )
+        with sp.transaction() as conn:
+            conn.execute(
+                "CREATE TRIGGER fail_undo BEFORE UPDATE ON expense_actions WHEN NEW.undone=1 "
+                "BEGIN SELECT RAISE(ABORT,'private detail'); END"
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            service.undo_latest_action(42, action_id)
+        self.assertEqual(
+            (
+                sp.rows("SELECT * FROM expenses ORDER BY id"),
+                sp.rows("SELECT * FROM expense_actions ORDER BY id"),
+            ),
+            before,
+        )
