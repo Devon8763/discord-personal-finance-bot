@@ -1,6 +1,7 @@
 """Private, paged Discord spending dashboard."""
 import discord
 import calendar
+import life_ledger_service as life_service
 from selection_ui import OwnedView, Picker, PaymentPicker
 from form_ui import InlineForm
 import spending as sp
@@ -18,7 +19,7 @@ def progress(percent):
 def card(user_id,month,tab,page=0):
     if tab=='帳目': return calendar_embed(user_id,month),0,1
     if tab=='今天': month=sp.today().strftime('%Y-%m')
-    report = sp.month_report(user_id,month)
+    report = life_service.get_month_summary(user_id,month)
     total = next((b for b in report['budgets'] if b['category']=='總額'),None)
     ratio = total['used_percent'] if total else 0
     color = 0xe74c3c if ratio>=100 else 0xf1c40f if ratio>=80 else 0x2ecc71
@@ -35,10 +36,13 @@ def card(user_id,month,tab,page=0):
         embed.add_field(name='洞察',value='支出圖表 · 本週回顧 · 本月回顧 · 生活 AI · 本月結帳',inline=False)
         embed.add_field(name='常用捷徑管理',value='新增、修改、排序與停用；使用捷徑仍須確認表單。',inline=False)
     elif tab=='清單':
-        count = sp.rows("SELECT COUNT(*) AS n FROM expenses WHERE user_id=? AND substr(spent_on,1,7)=? AND kind='consumption'",(user_id,month))[0]['n']
-        pages = max(1,(count+5)//6)
+        requested_page = page
+        listing = life_service.list_expenses(user_id,month,include_voided=True,limit=6,offset=page*6)
+        pages = max(1,(listing['total']+5)//6)
         page = min(max(0,page),pages-1)
-        entries = sp.rows("SELECT * FROM expenses WHERE user_id=? AND substr(spent_on,1,7)=? AND kind='consumption' ORDER BY spent_on DESC,id DESC LIMIT 6 OFFSET ?",(user_id,month,page*6))
+        if page != requested_page:
+            listing = life_service.list_expenses(user_id,month,include_voided=True,limit=6,offset=page*6)
+        entries = listing['items']
         embed.description=f"本月已記錄 **{number(report['total'])} 元**"
         for row in entries:
             embed.add_field(name=f"{row['spent_on'][5:]} · {row['category']} · {number(row['cents']/100)} 元"+(' · 已撤銷' if row['voided'] else ''),value=f"{row['note']}\n`#{row['id']}` · {row['payment_source_name']} · "+('日常支出' if row['source']=='manual' else row['source']),inline=False)
@@ -118,7 +122,7 @@ class EntryModal(InlineForm):
                 await self.view.cog.ask.callback(self.view.cog,ctx,question=values['question'])
                 return
             if self.kind=='month':
-                sp.month_report(str(self.view.owner),values['month'])
+                life_service.get_month_summary(str(self.view.owner),values['month'])
                 self.view.month=values['month']
                 self.view.page=0
                 await ctx.send('已切換月份。')
@@ -126,7 +130,7 @@ class EntryModal(InlineForm):
                 sp.set_budget(str(self.view.owner),values['month'],values['category'],values['amount'])
                 await ctx.send('✅ 預算已儲存。')
             else:
-                key=sp.add(str(self.view.owner),values['amount'],values['category'],values['note'],values['date'],values['payment'])
+                key=life_service.add_expense(str(self.view.owner),values['amount'],values['category'],values['note'],values['date'],values['payment'])
                 self.saved = True
                 await ctx.send(f'✅ 支出 #{key} 已記錄。')
             await self.view.cog.notify(ctx)
@@ -417,8 +421,8 @@ class EditExpenseModal(InlineForm):
         await i.response.defer(ephemeral=True, thinking=True)
         try:
             source=None if values['payment']=='keep' else values['payment']
-            sp.edit(str(self.view.owner), self.expense['id'], values['amount'], values['category'], values['note'], values['date'],
-                    payment_source_id=source, expected_revision=self.expense['revision'])
+            life_service.update_expense(str(self.view.owner), self.expense['id'], values['amount'], values['category'], values['note'], values['date'],
+                                        payment_source_id=source, expected_revision=self.expense['revision'])
             await i.followup.send('✅ 消費已修改；可用 !記帳撤銷 還原最近操作。重新開啟帳目管理可查看最新清單。', ephemeral=True)
             await self.view.cog.notify(self.view.cog.interaction_context(i))
             await self.view.refresh()
@@ -459,7 +463,7 @@ class SearchExpensesModal(InlineForm):
         if values is None:return
         await i.response.defer(ephemeral=True,thinking=True)
         try:
-            entries=sp.search_expenses(str(self.owner),**values)
+            entries=life_service.search_expenses(str(self.owner),**values)
             view=SearchResults(self.dashboard,entries)
             await i.followup.send(**view.page_content(),view=view,ephemeral=True)
         except ValueError as error:
@@ -480,7 +484,7 @@ class SearchResults(Accounts):
     async def edit(self,i,key):
         if not await self.interaction_check(i):return
         try:
-            entry=sp.get_expense(str(self.owner),key)
+            entry=life_service.get_expense(str(self.owner),key)
             if entry['source']!='manual' or key not in [r['id'] for r in self.entries]:
                 raise ValueError('搜尋結果已變動，請重新搜尋。')
             await i.response.send_modal(EditExpenseModal(self.dashboard,entry))
@@ -498,7 +502,7 @@ def calendar_row(values):
 
 
 def calendar_embed(owner,month):
-    days=sp.calendar_days(str(owner),month)
+    days=life_service.get_calendar_days(str(owner),month)
     start=sp.month_date(month)
     marks={int(r['date'][-2:]):r['level'] for r in days}
     weeks=calendar.Calendar().monthdayscalendar(start.year,start.month)
@@ -516,7 +520,7 @@ class CalendarAccounts(OwnedView):
         self.dashboard,self.month,self.half=dashboard,month,half
 
     def add_dates(self,target,row=0):
-        days=sp.calendar_days(str(self.owner),self.month)
+        days=life_service.get_calendar_days(str(self.owner),self.month)
         selected=days[:15] if self.half=='first' else days[15:]
         select=discord.ui.Select(placeholder='選擇日期查看帳目',row=row+1,options=[
             discord.SelectOption(label=f"{d['date']}（週{'一二三四五六日'[sp.date.fromisoformat(d['date']).weekday()]}）",value=d['date']) for d in selected])
@@ -559,7 +563,7 @@ class CalendarAccounts(OwnedView):
         from selection_ui import choose_month
         async def selected(event,month):
             if not await self.interaction_check(event):return
-            sp.calendar_days(str(self.owner),month)
+            life_service.get_calendar_days(str(self.owner),month)
             self.month,self.half=month,'first'
             await event.response.edit_message(content=None,embed=self.render(),view=self)
         await choose_month(i,selected)
@@ -569,18 +573,18 @@ async def open_accounts(view, i, month=None,mode='calendar',on=None):
     if i.user.id!=view.owner:
         await i.response.send_message('請開啟自己的帳目管理。',ephemeral=True);return
     month = month or view.month
-    sp.calendar_days(str(view.owner),month)
+    life_service.get_calendar_days(str(view.owner),month)
     if mode=='calendar':
         calendar_view=CalendarAccounts(view,month)
         await i.response.send_message(embed=calendar_view.render(),view=calendar_view,ephemeral=True)
         return
-    entries = sp.month_expenses(str(view.owner), month)
+    entries = life_service.list_expenses(str(view.owner), month)['items']
     if on is not None:entries=[r for r in entries if r['spent_on']==on]
     async def selected(event, key):
         if event.user.id!=view.owner:
             await event.response.send_message('請開啟自己的帳目管理。',ephemeral=True);return
         try:
-            entry = sp.get_expense(str(view.owner), key)
+            entry = life_service.get_expense(str(view.owner), key)
             await event.response.send_modal(EditExpenseModal(view, entry))
         except ValueError as error:
             await event.response.send_message(str(error), ephemeral=True)
@@ -607,7 +611,7 @@ class Charts(OwnedView):
         self.month, self.kind, self.page = month, 'categories', 0
 
     def render(self):
-        data = sp.chart_data(str(self.owner), self.month)
+        data = life_service.get_chart_data(str(self.owner), self.month)
         names = {'categories':'支出分類分布', 'months':'最近六個月支出趨勢', 'payments':'付款來源支出分布'}
         items = data[self.kind]
         pages = max(1, (len(items)+7)//8)

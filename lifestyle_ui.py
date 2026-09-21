@@ -1,5 +1,6 @@
 """Private shortcuts, repeat confirmation and deterministic reviews."""
 import discord
+import life_ledger_service as life_service
 import spending as sp
 from selection_ui import OwnedView, Picker
 from presentation import number
@@ -29,7 +30,7 @@ class ConfirmExpense(InlineForm):
                 await i.followup.send('此表單已儲存，請重新開啟下一筆。',ephemeral=True);return
             if self.shortcut_id is not None:
                 sp.shortcut(str(i.user.id),self.shortcut_id)
-            key=sp.add(str(i.user.id),values['amount'],values['category'],values['note'],values['date'],values['payment'])
+            key=life_service.add_expense(str(i.user.id),values['amount'],values['category'],values['note'],values['date'],values['payment'])
             self.saved=True
             await i.followup.send(f'✅ 已新增消費 #{key}；原紀錄與捷徑未改動。',ephemeral=True)
             await self.dashboard.cog.notify(self.dashboard.cog.interaction_context(i))
@@ -39,10 +40,10 @@ class ConfirmExpense(InlineForm):
 
 
 async def open_recent(dashboard,i):
-    entries=sp.recent_expenses(str(dashboard.owner))
+    entries=life_service.get_recent_expenses(str(dashboard.owner))
     async def chosen(event,key):
         # Re-read before opening: another action may have voided the record.
-        row=sp.get_expense(str(dashboard.owner),key)
+        row=life_service.get_expense(str(dashboard.owner),key)
         if row['source']!='manual':
             await event.response.send_message('請重新開啟最近消費清單。',ephemeral=True);return
         await event.response.send_modal(ConfirmExpense(dashboard,row))
