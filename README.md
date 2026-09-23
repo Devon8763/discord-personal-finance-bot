@@ -201,6 +201,10 @@ python tests/run_discord_validation.py
 
 Ruff只啟用語法錯誤與Pyflakes `F` 規則，不執行格式化、import排序或自動修正。GitHub Actions會在推送到 `main`，以及對 `main` 的Pull Request自動執行上述兩項檢查。
 
+### 開發者架構
+
+程式邊界、目前實作與後續整理順序見 [ARCHITECTURE.md](ARCHITECTURE.md)。文件明確區分已落地的生活記帳 Services façade 與尚未建立的網站架構。
+
 ### 生活記帳 Services 層
 
 Discord的表單、按鈕、指令與看板只負責互動與顯示；可重用的生活消費與固定負擔讀取由 `life_ledger_service.py` 提供，並沿用 `spending.py` 的驗證、交易、rollback、revision與使用者隔離規則。帳目回傳統一補上 `status`（`active`／`voided`）、`origin`與`entry_type`（目前為`consumption`）；原資料表欄位不變。這是未來網站版的程式邊界準備，目前沒有FastAPI、HTTP API、網頁、登入或Discord OAuth。
