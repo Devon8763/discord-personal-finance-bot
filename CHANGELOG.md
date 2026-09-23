@@ -6,6 +6,13 @@
 
 ## 0.11.1 — 2026-09-21
 
+### Web 前基線整合與可重現驗證
+
+- 已將 `codex/life-ledger-service` 以 fast-forward 整合至本機 `main`，納入既有生活記帳 Services、集中 schema 初始化與架構文件；未產生合併衝突、未覆寫檔案、未刪除工作樹，也未推送遠端。
+- 確認並使用專案已忽略的 Python 3.12.14 `.venv`，依既有 pinned `requirements.txt` 與 `requirements-dev.txt` 安裝驗證所需套件；未新增正式依賴或安裝至系統 Python。
+- 整合後以隔離測試資料庫執行 `python -m ruff check .`，結果為 `All checks passed!`；完整 `python tests/run_discord_validation.py` 181 項測試通過。未讀取、修改或追蹤 Token、正式 `data.db`、備份、匯出檔或使用者資料。
+- 未建立 FastAPI、Discord OAuth、React、App 或其他網站功能；本機 `main` 尚未推送。
+
 ### 文件
 
 - 新增 `ARCHITECTURE.md`，說明目前 Discord、生活記帳、投資與資料庫模組邊界，並區分已落地的生活記帳 Services façade 與尚未建立的網站架構。
