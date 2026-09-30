@@ -8,7 +8,7 @@ from ledger import transaction
 
 FORMAT = 'life-ledger-backup'
 VERSION = 1
-MAX_BYTES = 16 * 1024 * 1024
+MAX_BYTES = 64 * 1024 * 1024
 MAX_RECORDS = 100_000
 MAX_DEPTH = 12
 MAX_TEXT = 4096

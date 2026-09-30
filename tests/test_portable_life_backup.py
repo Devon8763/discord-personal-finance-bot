@@ -225,6 +225,17 @@ class PortableLifeBackupTests(unittest.TestCase):
         data['data']['actions']=data['data']['actions']*20000
         with self.assertRaises(ValueError):self.bk.read_backup(self.encode(data))
 
+    def test_valid_backup_over_16_mib_and_reject_over_64_mib(self):
+        data = self.bk.read_backup(self.payload())
+        row = dict(data['data']['expenses'][0], payment_source_id=None, note='中' * 4096)
+        data['data']['expenses'].extend(dict(row, id=f'e_large_{i}') for i in range(1400))
+        payload = self.encode(data)
+        self.assertGreater(len(payload), 16 * 1024 * 1024)
+        self.assertLess(len(payload), 64 * 1024 * 1024)
+        self.assertEqual(self.bk.read_backup(payload), data)
+        with self.assertRaises(ValueError):
+            self.bk.read_backup(b' ' * (64 * 1024 * 1024 + 1))
+
     def test_source_anomalies_rejected_not_silently_removed_or_fixed(self):
         user=self.seed()
         with sp.transaction() as c:c.execute("UPDATE expense_actions SET before_json=? WHERE user_id=? AND before_json!='null'", ('{"user_id":"someone-else"}',user))

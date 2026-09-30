@@ -4,7 +4,7 @@ import { isoDate } from './rules.mjs';
 // Official UMD exports in Node; its browser global is created by the same local file.
 const { parse, stringify } = distribution.default ?? globalThis.LosslessJSON;
 export const MAX_INTEGER = 9223372036854775807n;
-export const MAX_BYTES = 16 * 1024 * 1024;
+export const MAX_BYTES = 64 * 1024 * 1024;
 export const EXPENSE_FIELDS = ['id', 'spent_on', 'cents', 'category', 'note', 'source', 'recurring_id', 'period', 'voided', 'payment_source_id', 'payment_source_name', 'kind', 'revision'];
 const FIELDS = {
   expenses: EXPENSE_FIELDS,

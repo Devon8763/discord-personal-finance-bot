@@ -160,7 +160,7 @@ restoreFile.onchange = async () => {
   review.hidden = true;
   error.textContent = '';
   if (!file || busy) return;
-  if (file.size > MAX_BYTES) { error.textContent = '備份檔超過 16 MiB 上限。'; return; }
+  if (file.size > MAX_BYTES) { error.textContent = '備份檔超過 64 MiB 上限。'; return; }
   try {
     const payload = new Uint8Array(await file.arrayBuffer());
     const backup = readBackup(payload);

@@ -83,3 +83,16 @@ test('format limits are independent from local 200 / 1000 limits', async () => {
   const many=empty();many.data.categories=Array.from({length:100001},(_,i)=>({name:'c'+i,active:0}));
   assert.throws(()=>b.validateBackup(many),b.BackupError);
 });
+test('valid UTF-8 JSON v1 above 16 MiB round-trips, but input above 64 MiB is rejected', async () => {
+  const b = await module();
+  const value = empty();
+  const row = b.readBackup(fixture).data.expenses[0];
+  value.data.expenses = Array.from({ length: 1400 }, (_, i) => ({
+    ...row, id: 'e_large_' + i, note: '中'.repeat(4096), payment_source_id: null,
+  }));
+  const encoded = b.writeBackup(value);
+  assert.ok(encoded.byteLength > 16 * 1024 * 1024);
+  assert.ok(encoded.byteLength < 64 * 1024 * 1024);
+  assert.deepEqual(b.readBackup(encoded), value);
+  assert.throws(() => b.readBackup(new Uint8Array(64 * 1024 * 1024 + 1)), b.BackupError);
+});
