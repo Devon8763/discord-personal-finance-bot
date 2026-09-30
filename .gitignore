@@ -3,6 +3,7 @@
 __pycache__/
 .env
 token.txt
+/start_web.local.cmd
 *.db
 *.db-*
 

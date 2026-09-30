@@ -102,6 +102,67 @@ class WriteReliability(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sp.month_report('42','2026-09')['budgets']),1)
         self.assertEqual(sp.rows('SELECT * FROM recurring_expenses'),[])
 
+    async def test_budget_state_is_rechecked_and_failures_roll_back(self):
+        real_transaction=sp.transaction
+        @contextmanager
+        def category_budget_added_before_lock():
+            with real_transaction() as conn:
+                conn.execute(
+                    'INSERT INTO budgets(user_id,month,category,cents) VALUES(?,?,?,?)',
+                    ('42','2026-09','餐飲',10000),
+                )
+            with real_transaction() as conn:yield conn
+
+        with patch.object(sp,'transaction',category_budget_added_before_lock):
+            with self.assertRaises(ValueError):
+                sp.set_budget('42','2026-09','總額',50)
+        self.assertEqual(
+            sp.rows("SELECT category,cents FROM budgets WHERE user_id='42'"),
+            [{'category':'餐飲','cents':10000}],
+        )
+
+        for event,operation in (
+            ('DELETE',lambda:sp.clear_budget('42','2026-09','餐飲')),
+            ('INSERT',lambda:sp.set_total_budget_to_category_sum('42','2026-09')),
+        ):
+            before=self.snapshot()
+            with real_transaction() as conn:
+                conn.execute(
+                    f"CREATE TRIGGER fail_budget BEFORE {event} ON budgets "
+                    "BEGIN SELECT RAISE(ABORT,'private detail'); END"
+                )
+            with self.assertRaises(sqlite3.IntegrityError):operation()
+            self.assertEqual(self.snapshot(),before)
+            with real_transaction() as conn:conn.execute('DROP TRIGGER fail_budget')
+
+    async def test_category_rename_failures_roll_back_every_reference(self):
+        sp.set_category('42','舊分類',True)
+        source=sp.add_payment_source('42','卡')
+        expense=sp.add('42',10,'舊分類','用途',payment_source_id=source)
+        sp.set_budget('42','2026-09','舊分類',100)
+        sp.add_recurring('42','固定','房租',10,'舊分類','2026-09')
+        sp.save_shortcut('42','捷徑','舊分類',source,'用途')
+        before=self.snapshot()
+        with sp.transaction() as conn:
+            conn.execute(
+                "CREATE TRIGGER fail_rename BEFORE UPDATE ON recurring_expenses "
+                "BEGIN SELECT RAISE(ABORT,'private detail'); END"
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            sp.rename_category('42','舊分類','新分類')
+        self.assertEqual(self.snapshot(),before)
+        with sp.transaction() as conn:conn.execute('DROP TRIGGER fail_rename')
+
+        with sp.transaction() as conn:
+            conn.execute(
+                'INSERT INTO expense_actions(user_id,expense_id,before_json) VALUES(?,?,?)',
+                ('42',expense,'not-json'),
+            )
+        malformed=self.snapshot()
+        with self.assertRaises(ValueError):
+            sp.rename_category('42','舊分類','新分類')
+        self.assertEqual(self.snapshot(),malformed)
+
     async def test_independent_batch_failed_row_has_no_partial_data(self):
         from spending_commands import Spending
         from discord.ext import commands

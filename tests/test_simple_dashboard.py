@@ -1,8 +1,10 @@
 import unittest
+from pathlib import Path
+
 import discord
 import spending as sp
-import test_phase1_ui as fixtures
-from test_phase1_ui import interaction
+from tests import test_phase1_ui as fixtures
+from tests.test_phase1_ui import interaction
 from dashboard import Dashboard,card
 
 
@@ -71,9 +73,18 @@ class SimpleDashboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(i.response.send_message.await_args.kwargs['view'].manage)
 
     async def test_every_dashboard_action_rejects_other_user(self):
-        for tab in ('今天','帳目','更多','預算','固定負擔','AI'):
+        for tab in ('今天','帳目','更多','預算','固定負擔'):
             self.view.tab=tab;self.view.render();self.labels(self.view)
             for button in self.view.children:
                 i=interaction(43);await button.callback(i)
                 i.response.send_modal.assert_not_awaited()
                 self.assertTrue(i.response.send_message.await_args.kwargs['ephemeral'])
+
+    def test_dashboard_does_not_import_or_use_spending_directly(self):
+        source = Path(__file__).parents[1].joinpath("dashboard.py").read_text(
+            encoding="utf-8"
+        )
+
+        for forbidden in ("import spending", "from spending", "sp."):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)

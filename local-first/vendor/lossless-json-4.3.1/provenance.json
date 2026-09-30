@@ -1,0 +1,15 @@
+{
+  "version": "4.3.1",
+  "source": "https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.1.tgz",
+  "repository": "https://github.com/josdejong/lossless-json",
+  "checked_on": "2026-09-29",
+  "package_sha256": "f71665240257ee183b98fd1b4e0a7cb81156ddff3f01070ea9331258902c1e5c",
+  "registry_integrity": "sha512-SqD/Bg3ZfltBJ2Z14hJ/BihnvtV553WO4g9/ePtlp4lrnl9jF3AdIJt53A/Wkg/0Li+LMfxaBqgx1MiFZdQlpQ==",
+  "runtime_dependencies": {},
+  "bundled_sources": ["config.js", "utils.js", "LosslessNumber.js", "numberParsers.js", "revive.js", "parse.js", "reviveDate.js", "stringify.js"],
+  "sha256": {
+    "lossless-json.js": "3eebf0821060a4d9910c55e6c50f11961062cc20944ee745007ea19e3cdec885",
+    "lossless-json.js.map": "ad515862b026074b31aff80d83a37d19bfb8826b0b6bf543d6f960ba17f731ed",
+    "LICENSE.md": "c5075e9ebeac2efabaddeb7ff8f215ef180f76da7837a79e3107868271693114"
+  }
+}

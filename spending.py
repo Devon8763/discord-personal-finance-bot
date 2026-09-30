@@ -1,32 +1,41 @@
 from presentation import number
 """Independent TWD spending ledger. Money is stored as integer cents."""
 import calendar
+from contextlib import closing
 import json
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal as Decimal
 from db import get_conn
 from ledger import transaction
+from life_ledger_rules import (
+    money as money, month_date as month_date, next_month as next_month,
+    category_totals as _category_totals, comparison_period as _comparison_period,
+    compare_expenses, budget_cents, validate_budget_totals, recurring_due_date,
+)
 
 TZ = timezone(timedelta(hours=8))
 CATEGORIES = ('餐飲', '交通', '購物', '居住', '娛樂', '醫療', '其他')
 
 
+class ExpenseUnavailableError(ValueError):
+    """The owner's active consumption entry is unavailable."""
+
+
+class ExpenseRevisionConflictError(ValueError):
+    """The entry changed after the caller's snapshot."""
+
+
+class RecurringUnavailableError(ValueError):
+    """The owner's fixed rule is unavailable for this operation."""
+
+
+class RecurringRevisionConflictError(ValueError):
+    """The rule changed after the caller's snapshot."""
+
+
 def today():
     return datetime.now(TZ).date()
-
-
-def money(value):
-    try:
-        number = Decimal(str(value))
-        if not number.is_finite() or number <= 0 or number > Decimal('1000000000'):
-            raise ValueError()
-        cents = number * 100
-        if cents != cents.to_integral_value():
-            raise ValueError()
-        return int(cents)
-    except (InvalidOperation, ValueError):
-        raise ValueError('金額需為正數，最多兩位小數且不超過十億元')
 
 
 def category_names(user_id, include_inactive=False):
@@ -35,22 +44,133 @@ def category_names(user_id, include_inactive=False):
     return names if include_inactive else [n for n in names if overrides.get(n,1)]
 
 
+def _category_names(conn, user_id, include_inactive=False):
+    overrides = dict(conn.execute(
+        'SELECT name,active FROM spending_categories WHERE user_id=?',
+        (user_id,),
+    ).fetchall())
+    names = list(dict.fromkeys((*CATEGORIES, *overrides)))
+    return names if include_inactive else [n for n in names if overrides.get(n, 1)]
+
+
 def category(value, user_id):
     names = category_names(user_id)
     if value not in names:
-        raise ValueError('分類請選：' + '、'.join(names) + '；可用 !分類新增 建立')
+        raise ValueError('分類請選：' + '、'.join(names))
     return value
 
 
-def set_category(user_id,name,active):
+def _category(conn, value, user_id):
+    names = _category_names(conn, user_id)
+    if value not in names:
+        raise ValueError('分類請選：' + '、'.join(names))
+    return value
+
+
+def _category_name(name):
     name = name.strip()
     if not name or len(name)>20 or name=='總額' or any(c in name for c in '\n\r'):
         raise ValueError('分類名稱需1～20字，不能使用「總額」')
+    return name
+
+
+def set_category(user_id,name,active):
+    name = _category_name(name)
     if not active and name not in category_names(user_id):
         raise ValueError('找不到啟用中的分類')
     with transaction() as conn:
         register(conn,user_id)
         conn.execute('INSERT INTO spending_categories VALUES(?,?,?) ON CONFLICT(user_id,name) DO UPDATE SET active=excluded.active',(user_id,name,int(active)))
+
+
+def rename_category(user_id, old_name, new_name):
+    old_name = old_name.strip()
+    new_name = _category_name(new_name)
+    if old_name == new_name:
+        raise ValueError('新分類名稱必須與原名稱不同')
+
+    with transaction() as conn:
+        register(conn, user_id)
+        if old_name not in _category_names(conn, user_id):
+            raise ValueError('找不到自己的啟用分類')
+        if new_name in _category_names(conn, user_id, True):
+            raise ValueError('已有同名分類，不能合併分類')
+
+        for table in ('expenses', 'budgets', 'recurring_expenses', 'recurring_expense_versions', 'spending_shortcuts'):
+            if conn.execute(
+                f'SELECT 1 FROM {table} WHERE user_id=? AND category=? LIMIT 1',
+                (user_id, new_name),
+            ).fetchone():
+                raise ValueError('已有同名分類歷史，不能合併分類')
+
+        action_updates = []
+        for action_id, before_json in conn.execute(
+            "SELECT id,before_json FROM expense_actions "
+            "WHERE user_id=? AND before_json!='null'",
+            (user_id,),
+        ).fetchall():
+            try:
+                before = json.loads(before_json)
+            except (TypeError, json.JSONDecodeError):
+                raise ValueError('分類改名失敗，請檢查資料後重試') from None
+            if not isinstance(before, dict):
+                raise ValueError('分類改名失敗，請檢查資料後重試')
+            if before.get('category') == new_name:
+                raise ValueError('已有同名分類歷史，不能合併分類')
+            if before.get('category') == old_name:
+                before['category'] = new_name
+                action_updates.append((json.dumps(before), user_id, action_id))
+
+        if old_name in CATEGORIES:
+            conn.execute(
+                'INSERT INTO spending_categories VALUES(?,?,0) '
+                'ON CONFLICT(user_id,name) DO UPDATE SET active=0',
+                (user_id, old_name),
+            )
+            conn.execute(
+                'INSERT INTO spending_categories VALUES(?,?,1)',
+                (user_id, new_name),
+            )
+        else:
+            changed = conn.execute(
+                'UPDATE spending_categories SET name=? '
+                'WHERE user_id=? AND name=? AND active=1',
+                (new_name, user_id, old_name),
+            )
+            if changed.rowcount != 1:
+                raise ValueError('找不到自己的啟用分類')
+
+        conn.execute(
+            'UPDATE recurring_expenses SET revision=revision+1 WHERE user_id=? AND '
+            '(category=? OR id IN (SELECT recurring_id FROM recurring_expense_versions WHERE user_id=? AND category=?))',
+            (user_id, old_name, user_id, old_name),
+        )
+
+        for table in ('expenses', 'budgets', 'recurring_expenses', 'recurring_expense_versions', 'spending_shortcuts'):
+            revision_update = ',revision=revision+1' if table == 'expenses' else ''
+            conn.execute(
+                f'UPDATE {table} SET category=?{revision_update} WHERE user_id=? AND category=?',
+                (new_name, user_id, old_name),
+            )
+        conn.executemany(
+            'UPDATE expense_actions SET before_json=? WHERE user_id=? AND id=?',
+            action_updates,
+        )
+
+        pending = conn.execute(
+            "SELECT id,notice_key FROM spending_notices WHERE user_id=? "
+            "AND delivered=0 AND notice_key LIKE 'budget:%'",
+            (user_id,),
+        ).fetchall()
+        obsolete = [
+            (notice_id, user_id)
+            for notice_id, notice_key in pending
+            if ':'.join(notice_key.split(':')[2:-1]) == old_name
+        ]
+        conn.executemany(
+            'DELETE FROM spending_notices WHERE id=? AND user_id=?',
+            obsolete,
+        )
 
 
 def reminder_levels(user_id):
@@ -61,7 +181,7 @@ def reminder_levels(user_id):
 def set_reminders(user_id,levels=None):
     if levels is not None:
         if not levels or len(levels)>10 or any(type(n) is not int or not 1<=n<=1000 for n in levels):
-            raise ValueError('請設定1～10個整數百分比，範圍1～1000，例如 !提醒設定 50 80 100')
+            raise ValueError('請設定1～10個整數百分比，範圍1～1000')
         levels = sorted(set(levels))
     with transaction() as conn:
         register(conn,user_id)
@@ -75,20 +195,6 @@ def set_reminders(user_id,levels=None):
             if int(notice_key.rsplit(':',1)[1]) not in enabled:
                 conn.execute('DELETE FROM spending_notices WHERE id=?',(key,))
         alerts(conn,user_id,today().strftime('%Y-%m'))
-
-
-def month_date(value):
-    try:
-        result = date.fromisoformat(value + '-01')
-        if result.strftime('%Y-%m') != value:
-            raise ValueError()
-        return result
-    except (ValueError, TypeError):
-        raise ValueError('月份格式：YYYY-MM')
-
-
-def next_month(value):
-    return (value.replace(day=28) + timedelta(days=4)).replace(day=1)
 
 
 def rows(sql, args=()):
@@ -110,13 +216,15 @@ def ensure_payment_sources(conn, user_id):
                      [(user_id, '未指定'), (user_id, '現金')])
 
 
-def payment_sources(user_id, include_inactive=False):
+def payment_sources(user_id, include_inactive=False, *, initialize_defaults=True):
+    sql = ('SELECT * FROM payment_sources WHERE user_id=?' + ('' if include_inactive else ' AND active=1') +
+           " ORDER BY CASE name WHEN '未指定' THEN 0 WHEN '現金' THEN 1 ELSE 2 END,id")
+    if not initialize_defaults:
+        return rows(sql, (user_id,))
     with transaction() as conn:
         ensure_payment_sources(conn, user_id)
         conn.row_factory = sqlite3.Row
-        return [dict(r) for r in conn.execute(
-            'SELECT * FROM payment_sources WHERE user_id=?' + ('' if include_inactive else ' AND active=1') +
-            " ORDER BY CASE name WHEN '未指定' THEN 0 WHEN '現金' THEN 1 ELSE 2 END,id", (user_id,))]
+        return [dict(r) for r in conn.execute(sql, (user_id,))]
 
 
 def payment_name(name):
@@ -173,7 +281,7 @@ def resolve_payment(conn, user_id, key):
 def get_expense(user_id, key):
     found = rows("SELECT * FROM expenses WHERE user_id=? AND id=? AND voided=0 AND kind='consumption'", (user_id, key))
     if not found:
-        raise ValueError('找不到自己的有效消費')
+        raise ExpenseUnavailableError('找不到自己的有效消費')
     return found[0]
 
 
@@ -189,11 +297,27 @@ def list_expenses(user_id, month, include_voided=False, limit=None, offset=0):
     if type(offset) is not int or offset < 0:
         raise ValueError('起始位置需為非負整數')
     start = month_date(month)
-    where = "user_id=? AND spent_on>=? AND spent_on<? AND kind='consumption'"
-    args = [str(user_id), start.isoformat(), next_month(start).isoformat()]
+    return _list_expenses_between(user_id, start, next_month(start), include_voided, limit, offset)
+
+
+def _list_expenses_between(user_id, start, until, include_voided=False, limit=None, offset=0, *, keyword='', category='', conn=None):
+    where = 'user_id=?'
+    args = [str(user_id)]
+    if start is not None:
+        where += ' AND spent_on>=?'
+        args.append(start.isoformat())
+    where += " AND spent_on<? AND kind='consumption'"
+    args.append(until.isoformat())
     if not include_voided:
         where += ' AND voided=0'
-    total = rows(f'SELECT COUNT(*) AS n FROM expenses WHERE {where}', args)[0]['n']
+    if keyword:
+        where += ' AND instr(lower(note),lower(?))>0'
+        args.append(keyword)
+    if category:
+        where += ' AND category=?'
+        args.append(category)
+    read = rows if conn is None else lambda sql, values: [dict(row) for row in conn.execute(sql, values)]
+    total = read(f'SELECT COUNT(*) AS n FROM expenses WHERE {where}', args)[0]['n']
     sql = f'SELECT * FROM expenses WHERE {where} ORDER BY spent_on DESC,id DESC'
     page_args = list(args)
     if limit is not None:
@@ -202,11 +326,123 @@ def list_expenses(user_id, month, include_voided=False, limit=None, offset=0):
     elif offset:
         sql += ' LIMIT -1 OFFSET ?'
         page_args.append(offset)
-    return {'items': rows(sql, page_args), 'total': total}
+    return {'items': read(sql, page_args), 'total': total}
+
+
+def list_expenses_in_range(user_id, start=None, end=None, *, keyword=''):
+    start_text = parse_search_date(start, '開始日期') if start is not None else None
+    end_text = parse_search_date(end, '結束日期') if end is not None else today().isoformat()
+    if (start is not None and start_text != start) or (end is not None and end_text != end):
+        raise ValueError('日期請使用 YYYY-MM-DD')
+    first = date.fromisoformat(start_text) if start is not None else None
+    last = date.fromisoformat(end_text)
+    if first is not None and first > last:
+        raise ValueError('開始日期不可晚於結束日期。')
+    return _list_expenses_between(user_id, first, last+timedelta(days=1), keyword=keyword.strip())
+
+
+def _comparison_categories(conn, user_id, as_of):
+    known = _category_names(conn, user_id, include_inactive=True)
+    active = _category_names(conn, user_id)
+    historical = [row[0] for row in conn.execute(
+        "SELECT DISTINCT category FROM expenses WHERE user_id=? AND kind='consumption' "
+        "AND voided=0 AND spent_on<=? ORDER BY category", (user_id, as_of.isoformat()),
+    )]
+    return [{'name': name, 'state': 'active' if name in active else 'inactive' if name in known else 'historical'}
+            for name in dict.fromkeys((*known, *historical))]
+
+
+def expense_comparison_categories(user_id, *, as_of=None):
+    as_of = as_of if as_of is not None else today()
+    with closing(get_conn()) as conn:
+        conn.execute('BEGIN')
+        return _comparison_categories(conn, str(user_id), as_of)
+
+
+def expense_comparison(user_id, a_start, a_end, b_start, b_end, *, category='', keyword='', as_of=None):
+    as_of = as_of if as_of is not None else today()
+    a, b = (_comparison_period(start, end, as_of) for start, end in ((a_start,a_end),(b_start,b_end)))
+    if not isinstance(category, str) or not isinstance(keyword, str) or len(keyword)>200:
+        raise ValueError('請確認分類與消費項目關鍵字')
+    user_id = str(user_id)
+    # One deferred read transaction keeps options, A/B and their category totals on the same snapshot.
+    with closing(get_conn()) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute('BEGIN')
+        options = _comparison_categories(conn, user_id, as_of)
+        if category and category not in {item['name'] for item in options}:
+            raise ValueError('請選自己的分類或歷史分類')
+        entries = []
+        for period in (a, b):
+            if not period['started']:
+                entries.append([])
+                continue
+            items = _list_expenses_between(
+                user_id, date.fromisoformat(period['actual_start']),
+                date.fromisoformat(period['actual_end'])+timedelta(days=1),
+                keyword=keyword.strip(), category=category, conn=conn,
+            )['items']
+            entries.append(items)
+    return compare_expenses(a_start, a_end, b_start, b_end, *entries, as_of=as_of, category_options=options)
 
 
 def recurring_expenses(user_id):
-    return rows('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id DESC', (user_id,))
+    with closing(get_conn()) as conn:
+        conn.row_factory = sqlite3.Row
+        month = today().strftime('%Y-%m')
+        rules = conn.execute('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id DESC', (user_id,)).fetchall()
+        return [_fixed_view(conn, rule, month) if rule['kind'] == '固定' else dict(rule) for rule in rules]
+
+
+def list_fixed_recurring(user_id):
+    return [rule for rule in recurring_expenses(user_id) if rule['kind'] == '固定']
+
+
+def _fixed_rule(conn, user_id, key, expected_revision=None, *, active=False):
+    conn.row_factory = sqlite3.Row
+    rule = conn.execute("SELECT * FROM recurring_expenses WHERE user_id=? AND id=? AND kind='固定'", (user_id, key)).fetchone()
+    if rule is None or (active and not rule['active']):
+        raise RecurringUnavailableError('找不到自己的固定支出')
+    if active or expected_revision is not None:
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError('版本格式錯誤')
+        if rule['revision'] != expected_revision:
+            raise RecurringRevisionConflictError('此固定支出已變動，請重新載入')
+    return rule
+
+
+def _recurring_version(conn, rule, month):
+    if rule['kind'] == '固定':
+        version = conn.execute(
+            'SELECT * FROM recurring_expense_versions WHERE recurring_id=? AND user_id=? '
+            'AND effective_month<=? ORDER BY effective_month DESC LIMIT 1',
+            (rule['id'], rule['user_id'], month),
+        ).fetchone()
+        if version is not None:
+            return dict(version)
+    return dict(rule)
+
+
+def _fixed_view(conn, rule, month):
+    current = _recurring_version(conn, rule, month)
+    result = dict(rule)
+    for name in ('name', 'cents', 'category', 'due_day'):
+        result[name] = current[name]
+    result['due_day'] = result['due_day'] or 1
+    pending = conn.execute(
+        'SELECT * FROM recurring_expense_versions WHERE recurring_id=? AND user_id=? '
+        'AND effective_month>? ORDER BY effective_month LIMIT 1',
+        (rule['id'], rule['user_id'], month),
+    ).fetchone()
+    result['pending'] = dict(pending) if pending is not None and any(
+        pending[name] != result[name] for name in ('name', 'cents', 'category', 'due_day')
+    ) else None
+    return result
+
+
+def get_fixed_recurring(user_id, key):
+    with closing(get_conn()) as conn:
+        return _fixed_view(conn, _fixed_rule(conn, user_id, key), today().strftime('%Y-%m'))
 
 
 def recorded_months(user_id):
@@ -221,6 +457,10 @@ def alerts(conn, user_id, month):
     setting = conn.execute('SELECT levels FROM spending_settings WHERE user_id=?',(user_id,)).fetchone()
     levels = json.loads(setting[0]) if setting else [80,100]
     for cat, budget in conn.execute('SELECT category,cents FROM budgets WHERE user_id=? AND month=?', (user_id, month)).fetchall():
+        if type(budget) is not int or budget < 0:
+            raise ValueError('預算金額資料無效')
+        if budget == 0:
+            continue
         sql = "SELECT COALESCE(SUM(cents),0) FROM expenses WHERE user_id=? AND substr(spent_on,1,7)=? AND voided=0 AND kind='consumption'"
         args = [user_id, month]
         if cat != '總額':
@@ -237,7 +477,7 @@ def add(user_id, amount, cat, note, on=None, payment_source_id=None):
     cents = money(amount)
     day = date.fromisoformat(on) if on else today()
     if day > today():
-        raise ValueError('日常支出不能填未來日期；固定負擔請用 !固定新增')
+        raise ValueError('日常支出不能填未來日期')
     if not note.strip() or len(note) > 200:
         raise ValueError('用途需為 1～200 字')
     with transaction() as conn:
@@ -259,9 +499,9 @@ def edit(user_id, key, amount, cat, note, on, payment_source_id=None, expected_r
         conn.row_factory = __import__('sqlite3').Row
         old = conn.execute("SELECT * FROM expenses WHERE id=? AND user_id=? AND voided=0 AND kind='consumption'", (key, user_id)).fetchone()
         if not old:
-            raise ValueError('找不到自己的有效支出')
+            raise ExpenseUnavailableError('找不到自己的有效支出')
         if expected_revision is not None and old['revision'] != expected_revision:
-            raise ValueError('此筆帳目已變動，請重新選取後修改')
+            raise ExpenseRevisionConflictError('此筆帳目已變動，請重新選取後修改')
         if cat != old['category']:
             category(cat, user_id)
         source_id, source_name = (old['payment_source_id'], old['payment_source_name']) if payment_source_id is None else resolve_payment(conn, user_id, payment_source_id)
@@ -281,9 +521,9 @@ def void_expense(user_id, key, expected_revision=None):
             (user_id, key),
         ).fetchone()
         if not old:
-            raise ValueError('找不到自己的有效消費')
+            raise ExpenseUnavailableError('找不到自己的有效消費')
         if expected_revision is not None and old['revision'] != expected_revision:
-            raise ValueError('此筆帳目已變動，請重新選取後修改')
+            raise ExpenseRevisionConflictError('此筆帳目已變動，請重新選取後修改')
         conn.execute(
             'INSERT INTO expense_actions(user_id,expense_id,before_json) VALUES(?,?,?)',
             (user_id, key, json.dumps(dict(old))),
@@ -294,11 +534,11 @@ def void_expense(user_id, key, expected_revision=None):
             (user_id, key),
         )
         if changed.rowcount != 1:
-            raise ValueError('找不到自己的有效消費')
+            raise ExpenseUnavailableError('找不到自己的有效消費')
 
 
 def fixed_burdens(user_id):
-    rules = rows('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id', (user_id,))
+    rules = sorted(recurring_expenses(user_id), key=lambda rule: (not rule['active'], rule['id']))
     month = today().strftime('%Y-%m')
     entries = rows(
         "SELECT id,note,cents,source,voided FROM expenses "
@@ -307,6 +547,8 @@ def fixed_burdens(user_id):
     )
     for rule in rules:
         rule.pop('user_id', None)
+        if rule.get('pending'):
+            rule['pending'].pop('user_id', None)
         rule['monthly_amount'] = rule.pop('cents') / 100
         if rule['periods']:
             start = month_date(rule['start_month'])
@@ -327,7 +569,7 @@ def undo(user_id, confirm=None):
         if confirm is None:
             return row[0], row[1]
         if confirm != row[0]:
-            raise ValueError('操作已變動，請重新輸入 !記帳撤銷')
+            raise ValueError('操作已變動，請重新確認')
         old = json.loads(row[2])
         if old is None:
             conn.execute('UPDATE expenses SET voided=1,revision=revision+1 WHERE id=? AND user_id=?', (row[1], user_id))
@@ -339,82 +581,180 @@ def undo(user_id, confirm=None):
 
 def set_budget(user_id, month, cat, amount):
     month_date(month)
-    cents = money(amount)
+    cents = budget_cents(amount)
     with transaction() as conn:
-        if cat != '總額':
-            category(cat,user_id)
         register(conn, user_id)
+        if cat != '總額':
+            _category(conn, cat, user_id)
         existing = dict(conn.execute('SELECT category,cents FROM budgets WHERE user_id=? AND month=?', (user_id, month)).fetchall())
         existing[cat] = cents
-        if '總額' not in existing:
-            raise ValueError('請先設定該月「總額」預算')
-        if sum(v for k,v in existing.items() if k != '總額') > existing['總額']:
-            raise ValueError('分類預算合計不可超過總預算')
+        validate_budget_totals(existing)
         conn.execute('INSERT INTO budgets VALUES(?,?,?,?) ON CONFLICT(user_id,month,category) DO UPDATE SET cents=excluded.cents', (user_id, month, cat, cents))
         alerts(conn, user_id, month)
+
+
+def _remove_pending_budget_notices(conn, user_id, month, cat):
+    prefix = f'budget:{month}:{cat}:'
+    conn.execute(
+        'DELETE FROM spending_notices WHERE user_id=? AND delivered=0 '
+        'AND substr(notice_key,1,?)=?',
+        (user_id, len(prefix), prefix),
+    )
+
+
+def clear_budget(user_id, month, cat):
+    month_date(month)
+    with transaction() as conn:
+        changed = conn.execute(
+            'DELETE FROM budgets WHERE user_id=? AND month=? AND category=?',
+            (user_id, month, cat),
+        )
+        if changed.rowcount != 1:
+            raise ValueError('找不到自己的本月預算')
+        _remove_pending_budget_notices(conn, user_id, month, cat)
+
+
+def set_total_budget_to_category_sum(user_id, month):
+    month_date(month)
+    with transaction() as conn:
+        register(conn, user_id)
+        count, cents = conn.execute(
+            "SELECT COUNT(*),COALESCE(SUM(cents),0) FROM budgets "
+            "WHERE user_id=? AND month=? AND category!='總額'",
+            (user_id, month),
+        ).fetchone()
+        if not count:
+            raise ValueError('目前沒有分類預算可合計')
+        if cents <= 0:
+            raise ValueError('預算金額需為正整數台幣')
+        conn.execute(
+            'INSERT INTO budgets VALUES(?,?,?,?) '
+            'ON CONFLICT(user_id,month,category) DO UPDATE SET cents=excluded.cents',
+            (user_id, month, '總額', cents),
+        )
+        alerts(conn, user_id, month)
+
+
+def _recurring_fields(name, amount, due_day):
+    if not name.strip() or len(name) > 100:
+        raise ValueError('項目名稱需 1～100 字')
+    if due_day is not None and (type(due_day) is not int or not 1 <= due_day <= 31):
+        raise ValueError('付款日需 1～31，短月以月底為準')
+    return money(amount)
+
+
+def recurring_start_months():
+    current = today().replace(day=1)
+    return [current.strftime('%Y-%m'), next_month(current).strftime('%Y-%m')]
 
 
 def add_recurring(user_id, kind, name, amount, cat, start, periods=0, due_day=None):
     if kind not in ('分期', '訂閱', '固定'):
         raise ValueError('種類請選：分期／訂閱／固定')
     beginning = month_date(start)
-    current = today().replace(day=1)
-    if beginning not in (current, next_month(current)):
+    if beginning.strftime('%Y-%m') not in recurring_start_months():
         raise ValueError('開始月份請選本月或下月')
     if (kind == '分期' and not 1 <= periods <= 600) or (kind != '分期' and periods != 0):
         raise ValueError('分期期數需 1～600；固定／訂閱請填 0')
-    if due_day is not None and not 1 <= due_day <= 31:
-        raise ValueError('付款日需 1～31，短月以月底為準；僅作備註')
-    if not name.strip() or len(name) > 100:
-        raise ValueError('項目名稱需 1～100 字')
-    cents = money(amount)
+    cents = _recurring_fields(name, amount, due_day)
     with transaction() as conn:
-        category(cat,user_id)
+        _category(conn, cat, user_id)
         register(conn, user_id)
-        return conn.execute('INSERT INTO recurring_expenses(user_id,name,cents,category,kind,start_month,periods,due_day) VALUES(?,?,?,?,?,?,?,?)', (user_id,name,cents,cat,kind,start,periods,due_day)).lastrowid
+        key = conn.execute('INSERT INTO recurring_expenses(user_id,name,cents,category,kind,start_month,periods,due_day) VALUES(?,?,?,?,?,?,?,?)', (user_id,name,cents,cat,kind,start,periods,due_day)).lastrowid
+        if kind == '固定':
+            conn.execute('INSERT INTO recurring_expense_versions VALUES(?,?,?,?,?,?,?)',
+                         (user_id, key, start, name, cents, cat, due_day or 1))
+        return key
 
 
-def sync_recurring(user_id=None, as_of=None):
-    day = as_of or today()
-    count = 0
+def update_fixed_recurring(user_id, key, name, amount, cat, due_day, expected_revision):
+    cents = _recurring_fields(name, amount, due_day)
+    if due_day is None:
+        raise ValueError('請選每月預定扣款日')
     with transaction() as conn:
-        conn.row_factory = __import__('sqlite3').Row
-        query = 'SELECT * FROM recurring_expenses WHERE active=1'
-        rules = conn.execute(query + (' AND user_id=?' if user_id is not None else ''), (user_id,) if user_id is not None else ()).fetchall()
-        for rule in rules:
-            month = month_date(rule['start_month'])
-            index = 1
-            while month <= day.replace(day=1) and (rule['periods'] == 0 or index <= rule['periods']):
-                period = month.strftime('%Y-%m')
-                note = rule['name'] + (f"（第 {index}/{rule['periods']} 期）" if rule['periods'] else '')
-                cursor = conn.execute('INSERT OR IGNORE INTO expenses(user_id,spent_on,cents,category,note,source,recurring_id,period) VALUES(?,?,?,?,?,?,?,?)', (rule['user_id'],month.isoformat(),rule['cents'],rule['category'],note,rule['kind'],rule['id'],period))
+        rule = _fixed_rule(conn, user_id, key, expected_revision, active=True)
+        effective = next_month(today().replace(day=1)).strftime('%Y-%m')
+        target = _recurring_version(conn, rule, effective)
+        if cat != target['category']:
+            _category(conn, cat, user_id)
+        conn.execute(
+            'INSERT INTO recurring_expense_versions VALUES(?,?,?,?,?,?,?) '
+            'ON CONFLICT(recurring_id,effective_month) DO UPDATE SET '
+            'name=excluded.name,cents=excluded.cents,category=excluded.category,due_day=excluded.due_day',
+            (user_id, key, effective, name, cents, cat, due_day),
+        )
+        conn.execute('UPDATE recurring_expenses SET revision=revision+1 WHERE user_id=? AND id=?', (user_id, key))
+    return effective
+
+
+def _post_recurring(conn, rules, day):
+    count = 0
+    for rule in rules:
+        month = month_date(rule['start_month'])
+        index = 1
+        while month <= day.replace(day=1) and (rule['periods'] == 0 or index <= rule['periods']):
+            period = month.strftime('%Y-%m')
+            settings = _recurring_version(conn, rule, period)
+            scheduled = recurring_due_date(month, settings['due_day'])
+            if scheduled <= day:
+                note = settings['name'] + (f"（第 {index}/{rule['periods']} 期）" if rule['periods'] else '')
+                cursor = conn.execute('INSERT OR IGNORE INTO expenses(user_id,spent_on,cents,category,note,source,recurring_id,period) VALUES(?,?,?,?,?,?,?,?)', (rule['user_id'],scheduled.isoformat(),settings['cents'],settings['category'],note,rule['kind'],rule['id'],period))
                 if cursor.rowcount:
                     count += 1
                     conn.execute('INSERT INTO expense_actions(user_id,expense_id,before_json) VALUES(?,?,?)', (rule['user_id'],cursor.lastrowid,'null'))
-                    conn.execute('INSERT OR IGNORE INTO spending_notices(user_id,notice_key,body) VALUES(?,?,?)', (rule['user_id'],f"auto:{rule['id']}:{period}",f"📅 自動記帳／補記 {period}：{note} {number(rule['cents']/100)} 元（非銀行扣款）"))
+                    conn.execute('INSERT OR IGNORE INTO spending_notices(user_id,notice_key,body) VALUES(?,?,?)', (rule['user_id'],f"auto:{rule['id']}:{period}",f"📅 自動記帳／補記 {period}：{note} {number(settings['cents']/100)} 元（非銀行扣款）"))
                     alerts(conn, rule['user_id'], period)
-                month = next_month(month)
-                index += 1
+            month = next_month(month)
+            index += 1
     return count
 
 
-def stop_recurring(user_id, key):
-    sync_recurring(user_id)
+def sync_recurring(user_id=None, as_of=None):
     with transaction() as conn:
-        if not conn.execute('UPDATE recurring_expenses SET active=0 WHERE id=? AND user_id=? AND active=1', (key,user_id)).rowcount:
+        conn.row_factory = sqlite3.Row
+        query = 'SELECT * FROM recurring_expenses WHERE active=1'
+        rules = conn.execute(query + (' AND user_id=?' if user_id is not None else ''), (user_id,) if user_id is not None else ()).fetchall()
+        return _post_recurring(conn, rules, as_of or today())
+
+
+def sync_fixed_recurring(user_id):
+    with transaction() as conn:
+        conn.row_factory = sqlite3.Row
+        rules = conn.execute("SELECT * FROM recurring_expenses WHERE active=1 AND user_id=? AND kind='固定'", (user_id,)).fetchall()
+        return _post_recurring(conn, rules, today())
+
+
+def _stop_recurring(conn, rule, day):
+    _post_recurring(conn, [rule], day)
+    conn.execute('UPDATE recurring_expenses SET active=0,revision=revision+1 WHERE id=? AND user_id=?', (rule['id'],rule['user_id']))
+
+
+def stop_recurring(user_id, key):
+    with transaction() as conn:
+        conn.row_factory = sqlite3.Row
+        rule = conn.execute('SELECT * FROM recurring_expenses WHERE id=? AND user_id=? AND active=1', (key,user_id)).fetchone()
+        if rule is None:
             raise ValueError('找不到自己的啟用項目')
+        _stop_recurring(conn, rule, today())
+
+
+def stop_fixed_recurring(user_id, key, expected_revision):
+    with transaction() as conn:
+        rule = _fixed_rule(conn, user_id, key, expected_revision, active=True)
+        _stop_recurring(conn, rule, today())
 
 
 def report(user_id, start, end):
     entries = rows("SELECT * FROM expenses WHERE user_id=? AND spent_on>=? AND spent_on<=? AND voided=0 AND kind='consumption' ORDER BY spent_on,id", (user_id,start.isoformat(),end.isoformat()))
     total = sum(r['cents'] for r in entries)
     cats = {}
-    for cat in dict.fromkeys((*category_names(user_id,True),*(r['category'] for r in entries))):
-        amount = sum(r['cents'] for r in entries if r['category']==cat)
+    category_cents = _category_totals(entries)
+    for cat in dict.fromkeys((*category_names(user_id,True),*category_cents)):
+        amount = category_cents.get(cat,0)
         fixed = sum(r['cents'] for r in entries if r['category']==cat and r['source']!='manual')
-        cats[cat] = dict(amount=amount/100,fixed=fixed/100,daily=(amount-fixed)/100,
+        cats[cat] = dict(amount=amount/100,amount_cents=amount,fixed=fixed/100,daily=(amount-fixed)/100,
                          share=round(amount/total*100,2) if total else None)
-    return dict(start=start.isoformat(),end=end.isoformat(),record_count=len(entries),total=total/100,
+    return dict(start=start.isoformat(),end=end.isoformat(),record_count=len(entries),total=total/100,total_cents=total,
                 fixed=sum(r['cents'] for r in entries if r['source']!='manual')/100,categories=cats,
                 coverage='僅代表已記錄資料；未記錄不代表沒有消費',has_records=bool(entries))
 
@@ -450,14 +790,18 @@ def monthly_closing(user_id,month):
 def month_report(user_id, month=None):
     start = month_date(month) if month else today().replace(day=1)
     if start > today():
-        raise ValueError('尚未到此月份；未來固定負擔請查看 !固定清單')
+        raise ValueError('尚未到此月份；請查看未來固定負擔')
     end = min(next_month(start)-timedelta(days=1), today())
     result = report(user_id,start,end)
     result['budgets'] = []
     for row in rows('SELECT category,cents FROM budgets WHERE user_id=? AND month=?', (user_id,start.strftime('%Y-%m'))):
+        if type(row['cents']) is not int or row['cents'] < 0:
+            raise ValueError('預算金額資料無效')
         spent = result['total'] if row['category']=='總額' else result['categories'][row['category']]['amount']
+        spent_cents = result['total_cents'] if row['category']=='總額' else result['categories'][row['category']]['amount_cents']
         budget = row['cents']/100
-        result['budgets'].append(dict(category=row['category'],budget=budget,spent=spent,remaining=round(budget-spent,2),used_percent=round(spent/budget*100,2)))
+        result['budgets'].append(dict(category=row['category'],budget=budget,spent=spent,remaining=(row['cents']-spent_cents)/100,used_percent=round(spent/budget*100,2) if row['cents'] else None,
+                                      budget_cents=row['cents'],spent_cents=spent_cents,remaining_cents=row['cents']-spent_cents))
     return result
 
 
@@ -525,7 +869,7 @@ def clear(user_id):
     import db
     with transaction() as conn:
         record_deletion(conn,user_id,db.DB_NAME)
-        for table in ('expenses','expense_actions','budgets','recurring_expenses','spending_notices','spending_users','spending_categories','spending_settings','payment_sources','spending_shortcuts','spending_onboarding'):
+        for table in ('expenses','expense_actions','budgets','recurring_expense_versions','recurring_expenses','spending_notices','spending_users','spending_categories','spending_settings','payment_sources','spending_shortcuts','spending_onboarding'):
             conn.execute(f'DELETE FROM {table} WHERE user_id=?', (user_id,))
 
 

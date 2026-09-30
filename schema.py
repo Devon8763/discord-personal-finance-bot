@@ -4,7 +4,6 @@
 def create_core_tables(conn):
     for statement in (
         "CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY)",
-        "CREATE TABLE IF NOT EXISTS ai_preferences (user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)))",
         "CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT,symbol TEXT,buy_price REAL,shares REAL)",
         "CREATE TABLE IF NOT EXISTS fund_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT,fund_name TEXT,amount REAL,price REAL,units REAL)",
         "CREATE TABLE IF NOT EXISTS watchlist (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT,symbol TEXT)",
@@ -24,6 +23,7 @@ def create_life_tables(conn):
         "CREATE TABLE IF NOT EXISTS expense_actions(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,expense_id INTEGER NOT NULL,before_json TEXT NOT NULL,undone INTEGER NOT NULL DEFAULT 0)",
         "CREATE TABLE IF NOT EXISTS budgets(user_id TEXT NOT NULL,month TEXT NOT NULL,category TEXT NOT NULL,cents INTEGER NOT NULL,PRIMARY KEY(user_id,month,category))",
         "CREATE TABLE IF NOT EXISTS recurring_expenses(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,name TEXT NOT NULL,cents INTEGER NOT NULL,category TEXT NOT NULL,kind TEXT NOT NULL,start_month TEXT NOT NULL,periods INTEGER NOT NULL,due_day INTEGER,active INTEGER NOT NULL DEFAULT 1)",
+        "CREATE TABLE IF NOT EXISTS recurring_expense_versions(user_id TEXT NOT NULL,recurring_id INTEGER NOT NULL,effective_month TEXT NOT NULL,name TEXT NOT NULL,cents INTEGER NOT NULL,category TEXT NOT NULL,due_day INTEGER NOT NULL CHECK(due_day BETWEEN 1 AND 31),PRIMARY KEY(recurring_id,effective_month))",
         "CREATE TABLE IF NOT EXISTS spending_notices(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,notice_key TEXT NOT NULL,body TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0,UNIQUE(user_id,notice_key))",
         "CREATE TABLE IF NOT EXISTS payment_sources(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,name TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,UNIQUE(user_id,name))",
         "CREATE TABLE IF NOT EXISTS spending_shortcuts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,name TEXT NOT NULL,category TEXT NOT NULL,payment_source_id INTEGER NOT NULL,note TEXT NOT NULL,cents INTEGER,position INTEGER NOT NULL,active INTEGER NOT NULL DEFAULT 1)",
@@ -59,6 +59,14 @@ def apply_legacy_compatibility(conn):
     ):
         if name not in expense_columns:
             conn.execute(f"ALTER TABLE expenses ADD COLUMN {name} {definition}")
+
+    if "revision" not in _column_names(conn, "recurring_expenses"):
+        conn.execute("ALTER TABLE recurring_expenses ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        "INSERT OR IGNORE INTO recurring_expense_versions "
+        "SELECT user_id,id,start_month,name,cents,category,COALESCE(due_day,1) "
+        "FROM recurring_expenses WHERE kind='固定'"
+    )
 
     users = conn.execute("SELECT user_id FROM spending_users UNION SELECT user_id FROM expenses").fetchall()
     for (user_id,) in users:

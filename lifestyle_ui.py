@@ -212,7 +212,8 @@ class Reviews(OwnedView):
             fields.extend(('付款來源：'+r['payment_source_name'],f"{number(r['cents']/100)} 元") for r in data['payments'])
             budgets=current['budgets']
             for b in budgets:
-                value=(f"已記錄 {number(b['spent'])}／{number(b['budget'])} 元 · 使用率 {number(b['used_percent'])}%\n"+('超支 ' if b['remaining']<0 else '剩餘 ')+number(abs(b['remaining']))+' 元') if current['has_records'] else f"預算額度 {number(b['budget'])} 元；尚無消費紀錄，資料不足，暫不計算使用率。"
+                usage = f"使用率 {number(b['used_percent'])}%" if b['used_percent'] is not None else '使用率不適用（零元預算）'
+                value=(f"已記錄 {number(b['spent'])}／{number(b['budget'])} 元 · {usage}\n"+('超支 ' if b['remaining']<0 else '剩餘 ')+number(abs(b['remaining']))+' 元') if current['has_records'] else f"預算額度 {number(b['budget'])} 元；尚無消費紀錄，資料不足，暫不計算使用率。"
                 fields.append(('預算：'+b['category'],value))
             if not budgets: fields.append(('預算','尚未設定本月預算。'))
         pages=max(1,(len(fields)+7)//8);self.page=min(self.page,pages-1)

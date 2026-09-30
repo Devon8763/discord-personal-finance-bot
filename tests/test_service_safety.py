@@ -19,6 +19,35 @@ class SafetyTests(unittest.IsolatedAsyncioTestCase):
         from service_safety import Safety
         self.safety=Safety(db.DB_NAME,clock=lambda:self.now)
 
+    async def test_fixed_versions_clear_and_restore_cannot_resurrect_deleted_user(self):
+        month = sp.today().strftime('%Y-%m')
+        sp.add_recurring('42', '固定', '本人', 1, '居住', month)
+        sp.add_recurring('43', '固定', '他人', 2, '居住', month)
+        saved = self.safety.backup('pre-update')
+        self.now += timedelta(hours=1)
+        with patch('service_safety.utc_now', return_value=self.now):
+            sp.clear('42')
+        self.assertEqual(sp.rows("SELECT * FROM recurring_expense_versions WHERE user_id='42'"), [])
+        self.safety.restore(saved.name, confirm=True)
+        self.assertEqual(sp.rows("SELECT * FROM recurring_expense_versions WHERE user_id='42'"), [])
+        self.assertEqual(len(sp.rows("SELECT * FROM recurring_expense_versions WHERE user_id='43'")), 1)
+
+    async def test_old_backup_without_version_table_remains_restorable(self):
+        month = sp.today().strftime('%Y-%m')
+        sp.add_recurring('42', '固定', '本人', 1, '居住', month)
+        sp.add_recurring('43', '固定', '他人', 2, '居住', month)
+        with sp.transaction() as conn:
+            conn.execute('DROP TABLE recurring_expense_versions')
+        saved = self.safety.backup('pre-update')
+        db.init_db()
+        self.now += timedelta(hours=1)
+        with patch('service_safety.utc_now', return_value=self.now):
+            sp.clear('42')
+        self.safety.restore(saved.name, confirm=True)
+        db.init_db()
+        self.assertEqual(sp.rows("SELECT * FROM recurring_expense_versions WHERE user_id='42'"), [])
+        self.assertEqual(len(sp.rows("SELECT * FROM recurring_expense_versions WHERE user_id='43'")), 1)
+
     async def test_daily_restart_cross_day_and_retention(self):
         first=self.safety.backup('daily')
         self.assertEqual(first,self.safety.backup('daily'))

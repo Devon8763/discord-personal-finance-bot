@@ -57,18 +57,18 @@ class InvestmentPanel(OwnedView):
     def render(self):
         self.clear_items()
         embed=discord.Embed(title='📈 投資紀錄 · '+self.tab,color=0x3498db,description='選擇操作，逐格填寫；文字指令仍可使用。')
-        for tab in ('股票','基金','觀察','歷史','AI'):
+        for tab in ('股票','基金','觀察','歷史'):
             button=discord.ui.Button(label=tab,row=0,style=discord.ButtonStyle.primary if tab==self.tab else discord.ButtonStyle.secondary)
             async def navigate(i,target=tab):
                 self.tab=target
                 await i.response.edit_message(embed=self.render(),view=self)
             button.callback=navigate;self.add_item(button)
-        actions={'股票':['buy','sell','remove','price'],'基金':['fundbuy','fundsell','fundprice'],'觀察':['watch','unwatch'],'歷史':['undo'],'AI':[]}[self.tab]
+        actions={'股票':['buy','sell','remove','price'],'基金':['fundbuy','fundsell','fundprice'],'觀察':['watch','unwatch'],'歷史':['undo']}[self.tab]
         for action in actions:
             button=discord.ui.Button(label=LABELS[action],row=1,style=discord.ButtonStyle.success)
             async def open_form(i,name=action): await i.response.send_modal(InvestmentModal(self,name))
             button.callback=open_form;self.add_item(button)
-        readers={'股票':[('查看持股','check'),('投資組合','portfolio')],'基金':[('查看基金','fundcheck')],'觀察':[('觀察清單','watchlist')],'歷史':[('最近交易','history'),('撤銷預覽','undo')],'AI':[('AI 投資摘要','分析')]}[self.tab]
+        readers={'股票':[('查看持股','check'),('投資組合','portfolio')],'基金':[('查看基金','fundcheck')],'觀察':[('觀察清單','watchlist')],'歷史':[('最近交易','history'),('撤銷預覽','undo')]}[self.tab]
         for label,command in readers:
             button=discord.ui.Button(label=label,row=2)
             async def read(i,name=command):

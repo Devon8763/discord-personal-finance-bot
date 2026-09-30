@@ -1,7 +1,6 @@
 from form_helpers import fill
 """Offline integration: real discord.py parsing, no login or real database."""
 import importlib.util
-import json
 import sys
 import tempfile
 import unittest
@@ -17,6 +16,27 @@ AVAILABLE = importlib.util.find_spec('discord') is not None
 
 @unittest.skipUnless(AVAILABLE, '需要 discord.py 套件才能執行離線整合測試')
 class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_command_hints_are_added_only_by_discord_entry(self):
+        import presentation
+        import spending_commands as ui
+        messages = {
+            '分類請選：餐飲': '分類請選：餐飲；可用 !分類新增 建立',
+            '日常支出不能填未來日期': '日常支出不能填未來日期；固定負擔請用 !固定新增',
+            '請設定1～10個整數百分比，範圍1～1000': '請設定1～10個整數百分比，範圍1～1000，例如 !提醒設定 50 80 100',
+            '操作已變動，請重新確認': '操作已變動，請重新輸入 !記帳撤銷',
+            '尚未到此月份；請查看未來固定負擔': '尚未到此月份；未來固定負擔請查看 !固定清單',
+            '尚未到此月份': '尚未到此月份',
+            '此筆帳目已變動，請重新選取後修改': '此筆帳目已變動，請重新選取後修改',
+        }
+        self.assertTrue(hasattr(presentation, 'discord_spending_error'))
+        for neutral, expected in messages.items():
+            with self.subTest(message=neutral):
+                self.assertEqual(presentation.discord_spending_error(ValueError(neutral)), expected)
+                ctx = SimpleNamespace(send=AsyncMock())
+                await ui.Spending.cog_command_error(None, ctx, ValueError(neutral))
+                self.assertEqual(ctx.send.await_args.args[0], expected)
+                self.assertTrue(ctx.spending_error_handled)
+
     async def test_real_command_parser_and_read_only_query(self):
         fake = ModuleType('scraper')
         fake.get_price = lambda symbol: None
@@ -32,8 +52,6 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
         import spending_commands as ui
         with tempfile.TemporaryDirectory() as directory, patch.object(db,'DB_NAME',str(Path(directory)/'test.db')):
             db.init_db()
-            with sp.transaction() as conn:
-                conn.execute('INSERT INTO ai_preferences(user_id,enabled) VALUES(?,1)',('42',))
             async with app.bot as client:
                 with patch.object(client.tree, 'sync', AsyncMock(return_value=[])):
                     await client.setup_hook()
@@ -73,7 +91,7 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                 fake_i=SimpleNamespace(user=SimpleNamespace(id=42),response=SimpleNamespace(defer=AsyncMock()),followup=SimpleNamespace(send=AsyncMock()))
                 await modal.on_submit(fake_i)
                 self.assertEqual(sp.rows('SELECT shares FROM assets WHERE user_id=?',('42',)),[{'shares':2.0}])
-                for tab in ('股票','基金','觀察','歷史','AI'):
+                for tab in ('股票','基金','觀察','歷史'):
                     panel.tab=tab
                     self.assertLessEqual(len(panel.render()),6000)
                 view = ui.SpendingView(cog)
@@ -95,7 +113,7 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(await dashboard.interaction_check(interaction))
                 stranger=SimpleNamespace(user=SimpleNamespace(id=43),response=SimpleNamespace(send_message=AsyncMock()))
                 self.assertFalse(await dashboard.interaction_check(stranger))
-                for tab in ('今天','帳目','更多','預算','固定負擔','AI'):
+                for tab in ('今天','帳目','更多','預算','固定負擔'):
                     dashboard.tab=tab
                     embed=dashboard.render()
                     self.assertLessEqual(len(embed),6000)
@@ -113,25 +131,6 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                     fill(modal.fields[key],value)
                 await modal.on_submit(interaction)
                 self.assertEqual(sp.month_report('42')['total'],3175)
-                # Restore test account amount for the existing query assertions.
-                action,_=sp.undo('42');sp.undo('42',action)
-                before = sp.rows('SELECT * FROM expenses')
-                plan = json.dumps(dict(intent='spending',month=month,category='餐飲',unit='月',count=3))
-                with patch.object(ui,'complete',AsyncMock(side_effect=[plan,'餐飲已記錄150元'])):
-                    answer = await command('!問 這個月餐飲花了多少？')
-                    body = answer.send.await_args.args[0]
-                    self.assertIn('150 元',body)
-                    self.assertNotIn('.00',body)
-                    self.assertNotIn('當週',body)
-                    self.assertEqual(body.count(ui.NOTE),1)
-                with patch.object(ui,'complete',AsyncMock(return_value='')):
-                    answer = await command('!問 這個月花多少？')
-                    self.assertIn('AI 回覆未完成',answer.send.await_args.args[0])
-                self.assertEqual(sp.rows('SELECT * FROM expenses'),before)
-                plan = json.dumps(dict(intent='unsupported',month='',category='',unit='月',count=3))
-                with patch.object(ui,'complete',AsyncMock(return_value=plan)):
-                    await command('!問 幫我刪除所有支出')
-                self.assertEqual(sp.rows('SELECT * FROM expenses'),before)
                 modal = ui.RecurringModal(cog,'訂閱',owner=42)
                 for field,value in ((modal.item_name,'影音平台'),(modal.amount,'390'),(modal.category,'娛樂'),(modal.plan,('訂閱',month))):
                     fill(field,value)

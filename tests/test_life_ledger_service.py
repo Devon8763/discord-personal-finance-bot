@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +12,121 @@ import spending as sp
 
 
 class LifeLedgerServiceTests(unittest.TestCase):
+    def test_range_facade_normalizes_owner_and_passes_domain_rows(self):
+        row = dict(id=1, user_id='42', cents=29, source='固定', voided=0)
+        with patch.object(sp, 'list_expenses_in_range', return_value={'items': [row], 'total': 1}) as query:
+            result = service.list_expenses_in_range(42, '2026-08-31', '2026-09-24', keyword='午餐')
+            query.assert_called_once_with('42', '2026-08-31', '2026-09-24', keyword='午餐')
+            self.assertEqual(result['total'], 1)
+            self.assertEqual((result['items'][0]['cents'], result['items'][0]['status'], result['items'][0]['origin']), (29, 'active', '固定'))
+            self.assertNotIn('status', row)
+            query.reset_mock()
+            service.list_expenses_in_range(42)
+            query.assert_called_once_with('42', None, None, keyword='')
+        error = ValueError('core validation')
+        with patch.object(sp, 'list_expenses_in_range', side_effect=error):
+            with self.assertRaises(ValueError) as raised:
+                service.list_expenses_in_range(42)
+            self.assertIs(raised.exception, error)
+        own = service.add_expense(42, '.29', '餐飲', '本人', '2026-09-01')
+        service.add_expense(43, 999, '餐飲', '他人', '2026-09-01')
+        result = service.list_expenses_in_range(42, '2026-09-01', '2026-09-01')
+        self.assertEqual([row['id'] for row in result['items']], [own])
+
+    def test_month_summary_passes_exact_fields_and_normalizes_owner(self):
+        sentinel = {'total_cents': 29, 'budgets': []}
+        with patch.object(sp, 'month_report', return_value=sentinel) as summary:
+            self.assertIs(service.get_month_summary(42, '2026-09'), sentinel)
+        summary.assert_called_once_with('42', '2026-09')
+        service.add_expense(42, '.29', '餐飲', '本人', '2026-09-01')
+        service.add_expense(43, 999, '餐飲', '他人', '2026-09-01')
+        sp.set_budget('42', '2026-09', '總額', 1)
+        result = service.get_month_summary(42, '2026-09')
+        self.assertEqual(result['total_cents'], 29)
+        self.assertIsInstance(result['total_cents'], int)
+        self.assertIsInstance(result['categories']['餐飲']['amount_cents'], int)
+        for field, expected in (('budget_cents', 100), ('spent_cents', 29), ('remaining_cents', 71)):
+            self.assertEqual(result['budgets'][0][field], expected)
+            self.assertIsInstance(result['budgets'][0][field], int)
+
+    def snapshot(self):
+        return {
+            table: sp.rows(f'SELECT * FROM {table} ORDER BY rowid')
+            for table in ('expenses', 'expense_actions', 'payment_sources', 'sqlite_sequence')
+        }
+
+    def test_expense_errors_are_typed_and_value_error_compatible(self):
+        self.assertTrue(hasattr(service, 'ExpenseUnavailableError'))
+        self.assertTrue(hasattr(service, 'ExpenseRevisionConflictError'))
+        self.assertTrue(issubclass(service.ExpenseUnavailableError, ValueError))
+        self.assertTrue(issubclass(service.ExpenseRevisionConflictError, ValueError))
+        own = service.add_expense(42, 10, '餐飲', '本人', '2026-09-01')
+        foreign = service.add_expense(43, 10, '餐飲', '他人', '2026-09-01')
+        voided = service.add_expense(42, 10, '餐飲', '撤銷', '2026-09-01')
+        service.void_expense(42, voided)
+        with sp.transaction() as conn:
+            other = conn.execute("INSERT INTO expenses(user_id,spent_on,cents,category,note,kind) VALUES('42','2026-09-01',100,'餐飲','非消費','other')").lastrowid
+        before = self.snapshot()
+        for key in (999999, foreign, voided, other):
+            for call in (
+                lambda: service.get_expense(42, key),
+                lambda: service.update_expense(42, key, 20, '交通', '改', '2026-09-01', expected_revision=0),
+                lambda: service.void_expense(42, key, expected_revision=0),
+            ):
+                with self.assertRaises(service.ExpenseUnavailableError):
+                    call()
+                self.assertEqual(self.snapshot(), before)
+        for call in (
+            lambda: service.update_expense(42, own, 20, '交通', '改', '2026-09-01', expected_revision=99),
+            lambda: service.void_expense(42, own, expected_revision=99),
+        ):
+            with self.assertRaisesRegex(service.ExpenseRevisionConflictError, '此筆帳目已變動'):
+                call()
+            self.assertEqual(self.snapshot(), before)
+
+    def test_payment_options_read_only_preserves_database(self):
+        before = self.snapshot()
+        self.assertEqual(service.get_payment_sources(42, initialize_defaults=False), [])
+        self.assertEqual(self.snapshot(), before)
+        source = sp.add_payment_source('42', '舊卡')
+        sp.disable_payment_source('42', source)
+        before = self.snapshot()
+        active = service.get_payment_sources(42, initialize_defaults=False)
+        self.assertNotIn(source, [row['id'] for row in active])
+        all_sources = service.get_payment_sources(42, True, initialize_defaults=False)
+        self.assertIn(source, [row['id'] for row in all_sources])
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual([row['name'] for row in service.get_payment_sources(43)], ['未指定', '現金'])
+
+    def test_revision_is_rechecked_after_acquiring_write_lock(self):
+        key = service.add_expense(42, 10, '餐飲', '原值', '2026-09-01')
+        real_transaction = sp.transaction
+        for operation in ('edit', 'void'):
+            original = service.get_expense(42, key)
+            committed = {}
+
+            @contextmanager
+            def changed_before_lock():
+                service.update_expense(42, key, 25, '交通', '較新', '2026-09-01', expected_revision=original['revision'])
+                committed.update(self.snapshot())
+                with real_transaction() as conn:
+                    yield conn
+
+            # The competing write uses the real transaction, avoiding recursive patching.
+            @contextmanager
+            def racing_transaction():
+                with patch.object(sp, 'transaction', real_transaction):
+                    with changed_before_lock() as conn:
+                        yield conn
+
+            with patch.object(sp, 'transaction', racing_transaction):
+                with self.assertRaisesRegex(ValueError, '此筆帳目已變動'):
+                    if operation == 'edit':
+                        service.update_expense(42, key, 99, '餐飲', '舊', '2026-09-01', expected_revision=original['revision'])
+                    else:
+                        service.void_expense(42, key, original['revision'])
+            self.assertEqual(self.snapshot(), committed)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.db_patch = patch.object(db, "DB_NAME", str(Path(self.temp.name) / "service.db"))
@@ -114,6 +230,98 @@ class LifeLedgerServiceTests(unittest.TestCase):
         sp.set_budget("42", "2026-10", "總額", 1000)
         self.assertEqual([row["id"] for row in service.get_recurring_expenses(42)], [own_rule])
         self.assertEqual(service.get_recorded_months(42), ["2026-08", "2026-10"])
+
+    def test_dashboard_facade_normalizes_users_and_forwards_parameters(self):
+        as_of = date(2026, 9, 21)
+        expected = object()
+        cases = (
+            ("get_today", "today", (), ()),
+            ("parse_month", "month_date", ("2026-09",), ("2026-09",)),
+            ("get_shortcuts", "shortcuts", (42, True), ("42", True)),
+            ("get_reminder_levels", "reminder_levels", (42,), ("42",)),
+            (
+                "set_budget",
+                "set_budget",
+                (42, "2026-09", "總額", "1000"),
+                ("42", "2026-09", "總額", "1000"),
+            ),
+            ("sync_recurring", "sync_recurring", (42, as_of), ("42", as_of)),
+            (
+                "get_onboarding_needed",
+                "onboarding_needed",
+                (42,),
+                ("42",),
+            ),
+            ("dismiss_onboarding", "dismiss_onboarding", (42,), ("42",)),
+            (
+                "get_monthly_closing",
+                "monthly_closing",
+                (42, "2026-09"),
+                ("42", "2026-09"),
+            ),
+        )
+
+        for facade_name, core_name, args, forwarded in cases:
+            with self.subTest(facade=facade_name):
+                with patch.object(service.sp, core_name, return_value=expected) as core:
+                    result = getattr(service, facade_name)(*args)
+                self.assertIs(result, expected)
+                core.assert_called_once_with(*forwarded)
+
+    def test_settings_facades_normalize_users_and_forward_parameters(self):
+        expected = object()
+        cases = (
+            (
+                "clear_budget",
+                "clear_budget",
+                (42, "2026-09", "餐飲"),
+                ("42", "2026-09", "餐飲"),
+            ),
+            (
+                "set_total_budget_to_category_sum",
+                "set_total_budget_to_category_sum",
+                (42, "2026-09"),
+                ("42", "2026-09"),
+            ),
+            ("add_category", "set_category", (42, "寵物"), ("42", "寵物", True)),
+            (
+                "rename_category",
+                "rename_category",
+                (42, "寵物", "毛孩"),
+                ("42", "寵物", "毛孩"),
+            ),
+            (
+                "disable_category",
+                "set_category",
+                (42, "寵物"),
+                ("42", "寵物", False),
+            ),
+            (
+                "add_payment_source",
+                "add_payment_source",
+                (42, "卡"),
+                ("42", "卡"),
+            ),
+            (
+                "rename_payment_source",
+                "rename_payment_source",
+                (42, 7, "新卡"),
+                ("42", 7, "新卡"),
+            ),
+            (
+                "disable_payment_source",
+                "disable_payment_source",
+                (42, 7),
+                ("42", 7),
+            ),
+        )
+
+        for facade_name, core_name, args, forwarded in cases:
+            with self.subTest(facade=facade_name):
+                with patch.object(service.sp, core_name, return_value=expected) as core:
+                    result = getattr(service, facade_name)(*args)
+                self.assertIs(result, expected)
+                core.assert_called_once_with(*forwarded)
 
     def test_void_is_soft_and_active_reads_exclude_it(self):
         expense_id = service.add_expense(42, 30, "餐飲", "晚餐", "2026-09-03")

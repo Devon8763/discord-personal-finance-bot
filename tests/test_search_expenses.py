@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 import discord
 import spending as sp
+import life_ledger_service as life_service
 import test_phase1_ui as fixtures
 from test_phase1_ui import interaction,choose
 from form_helpers import fill
@@ -9,6 +10,25 @@ from form_helpers import fill
 
 class SearchTests(unittest.IsolatedAsyncioTestCase):
     setUp=fixtures.PhaseOneUI.setUp
+
+    async def test_full_range_query_keeps_discord_manual_search_and_edit_rules(self):
+        manual = sp.add('42', 20, '餐飲', '早餐', '2026-09-01')
+        for kind, periods in (('固定', 0), ('訂閱', 0), ('分期', 2)):
+            sp.add_recurring('42', kind, '早餐', 20, '居住', '2026-09', periods)
+        sp.sync_recurring('42')
+        full = sp.list_expenses_in_range('42', '2026-09-01', '2026-09-10', keyword='早餐')
+        self.assertEqual(full['total'], 4)
+        for query in (sp.search_expenses, life_service.search_expenses):
+            for on in ('2026-09-01', '2026/09/01', '20260901'):
+                self.assertEqual([row['id'] for row in query('42', '早餐', on, on)], [manual])
+        from dashboard import SearchResults
+        view = SearchResults(self.view, full['items'])
+        for row in full['items']:
+            if row['source'] != 'manual':
+                i = interaction()
+                await view.edit(i, row['id'])
+                i.response.send_modal.assert_not_awaited()
+                self.assertTrue(i.response.send_message.await_args.kwargs['ephemeral'])
 
     async def test_partial_literal_keywords_ranges_and_order(self):
         keys=[sp.add('42',20,'餐飲',note,on) for note,on in (

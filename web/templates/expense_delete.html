@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}確認刪除帳目｜DiscordBOT Web{% endblock %}
+{% block panel_class %}panel expense-panel{% endblock %}
+{% block content %}
+  <h1>確認刪除帳目</h1>
+  <dl>
+    <dt>日期</dt><dd>{{ expense.spent_on }}</dd>
+    <dt>金額</dt><dd>{{ amount }} 元</dd>
+    <dt>消費項目</dt><dd>{{ expense.note }}</dd>
+    <dt>分類</dt><dd>{{ expense.category }}</dd>
+    <dt>付款方式</dt><dd>{{ expense.payment_source_name }}</dd>
+  </dl>
+  <p>刪除後，此筆帳目不再計入搜尋、月曆及預算消費統計；帳目資料仍保留為軟刪除紀錄。</p>
+  {% if auto_date %}<p>只刪除此筆已入帳消費，後續固定、訂閱或分期排程照常執行。</p>{% endif %}
+  <p>Web 不提供撤銷；既有 Discord 撤銷僅適用於當時最近一筆可撤銷操作，後續新操作可能使舊確認失效。</p>
+  <form method="post" action="/expenses/{{ expense.id }}/delete" class="entry-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_revision" value="{{ revision }}">
+    {% for name, value in return_context.items() %}
+      <input type="hidden" name="{{ name }}" value="{{ value }}">
+    {% endfor %}
+    <button type="submit" class="danger">確認刪除</button>
+  </form>
+  <p><a href="{{ edit_url }}">取消，返回更改頁</a></p>
+{% endblock %}

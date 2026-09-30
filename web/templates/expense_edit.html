@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}更改帳目｜DiscordBOT Web{% endblock %}
+{% block panel_class %}panel expense-panel{% endblock %}
+{% block content %}
+  <h1>更改帳目</h1>
+  {% if saved %}<p class="success" role="status">已更改帳目</p>{% endif %}
+  {% if error %}<p class="error" role="alert">{{ error }} 若有過長或無法辨識的輸入，請重新輸入。</p>{% endif %}
+
+  {% if can_submit %}
+    <form class="entry-form" method="post" action="/expenses/{{ expense.id }}/edit">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ revision }}">
+      {% for name, value in return_context.items() %}
+        <input type="hidden" name="{{ name }}" value="{{ value }}">
+      {% endfor %}
+      <label for="spent_on">日期</label>
+      <input id="spent_on" name="spent_on" type="date" value="{{ values.spent_on }}" required{% if auto_date %} readonly aria-describedby="date-rule"{% endif %}>
+      {% if auto_date %}<p id="date-rule">自動入帳日期不可移動；更改本筆不會改動後續排程。</p>{% endif %}
+      {% if error and values.spent_on %}<p>日期原輸入：{{ values.spent_on }}</p>{% endif %}
+
+      <label for="amount">金額</label>
+      <input id="amount" name="amount" inputmode="decimal" value="{{ values.amount }}" maxlength="30" required aria-describedby="amount-rule">
+      <p id="amount-rule">需為正數，最多兩位小數，不超過十億元；請勿輸入千分位。</p>
+
+      <label for="note">消費項目</label>
+      <input id="note" name="note" value="{{ values.note }}" maxlength="200" required>
+
+      <label for="category">分類</label>
+      <select id="category" name="category" required>
+        {% if invalid_category %}<option value="" disabled selected>原選擇無法使用，請重新選擇</option>{% endif %}
+        {% if original_category_inactive %}
+          <option value="{{ expense.category }}"{% if values.category == expense.category %} selected{% endif %}>{{ expense.category }}（已停用，僅可保留）</option>
+        {% endif %}
+        {% for category in categories %}
+          <option value="{{ category }}"{% if values.category == category %} selected{% endif %}>{{ category }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="payment_source_id">付款方式</label>
+      <select id="payment_source_id" name="payment_source_id" required>
+        {% if invalid_payment_source %}<option value="" disabled selected>原選擇無法使用，請重新選擇</option>{% endif %}
+        <option value="keep"{% if values.payment_source_id == 'keep' %} selected{% endif %}>保留原付款方式：{{ expense.payment_source_name }}</option>
+        {% for source in payment_sources %}
+          <option value="{{ source.id }}"{% if values.payment_source_id == source.id|string %} selected{% endif %}>{{ source.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">儲存更改</button>
+    </form>
+    <p><a class="button danger" href="{{ delete_url }}">刪除此筆帳目</a></p>
+  {% else %}
+    <h2>尚未儲存的輸入</h2>
+    <dl>
+      <dt>日期</dt><dd>{{ values.spent_on }}</dd>
+      <dt>金額</dt><dd>{{ values.amount }}</dd>
+      <dt>消費項目</dt><dd>{{ values.note }}</dd>
+      <dt>分類</dt><dd>{{ reference_category }}</dd>
+      <dt>付款方式</dt><dd>{{ reference_payment }}</dd>
+    </dl>
+    <p><a href="{{ edit_url }}">重新載入帳目</a></p>
+  {% endif %}
+  <p><a href="{{ return_url }}">返回列表</a></p>
+{% endblock %}

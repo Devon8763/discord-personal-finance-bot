@@ -4,6 +4,522 @@
 
 依使用者於2026-09-10調整的規則：大型更新遞增 `0.X.0`，小型新增、介面調整與修錯遞增 `0.X.Y`。歷史版本重新編號，原編號保留於標題供對照；歷史功能與驗證紀錄不變。
 
+## 0.12.2 — 2026-09-30
+
+### 本機合成驗證頁安全與資料可靠性修正
+
+- 追查表單／備份檔至純規則、IndexedDB、頁面與下載，以及預覽服務和 Service Worker。修正儲存配額或底層寫入錯誤可能把瀏覽器原始錯誤訊息顯示在頁面的問題：只顯示已知帳本／表單驗證錯誤，其餘改用固定提示；驗證失敗仍保留輸入，寫入中止仍完整回滾。新增直接輸入與備份還原惡意字串的瀏覽器核對。因本頁程式更新，離線快取版本改為 `local-first-offline-0.12.2-v1`；沒有 IndexedDB／備份格式／Python schema 變更，也沒有新增依賴、帳號或網路服務。
+- 目前資料只在專用 IndexedDB，下載時另產生未加密 JSON Blob；靜態快取只含固定程式檔，預覽服務只記錄方法與路徑。未發現帳目進入網址、靜態快取或外部網域請求的程式路徑。此為程式檢查及合成測試範圍，不是完整封包稽核或真實資料安全認證。
+- Node 20 項、完整正式檔案防護 Python 隔離 438 項通過；原生 IndexedDB 11 組、頁面故障／安全 7 組、備份互通 14 組與首次入口 5／8／9 組瀏覽器測試通過。新增錯誤案例先失敗再修正；惡意文字只顯示為文字，測試頁 Resource Timing 未見惡意路徑或外部來源。實際停止預覽服務並確認無法連線、關閉頁籤再開相同網址，合成帳目仍在；離線更改與確認軟刪除後再次重開仍一致。Ruff、14 個 JavaScript 檔語法及 CRLF 相容差異檢查通過；原樣 `git diff --check` 因既有 CRLF 行尾警告未通過，本輪接觸檔案另核對無行尾空白。
+- 啟動方式仍為 `node tests/local_first_preview.mjs` 後開啟 `http://127.0.0.1:8767/local-first/`；看到離線就緒才可停服重開。整份帳本交易仍有 200 筆消費／1000 筆操作上限；Service Worker 缺檔／更新失敗僅由 Node 模擬，真實配額耗盡、其他瀏覽器／實體手機、完整網路封包、正式帳本及正式備份未驗證。冷啟動使用既有 In-app Browser 合成測試設定檔，非全新空白 profile；這次只看到離線下載請求，未由工具確認檔案落地。使用者先前手動確認過落地，不列為本輪測得。瀏覽器可能清除資料，備份未加密，仍僅供合成資料測試。
+
+### 同版合成跨來源搬移演練補記（不升版）
+
+- 在兩個新本機來源 `127.0.0.1:18761` 與 `127.0.0.1:18762`，實際完成九類合成帳本的「A 落地下載 → 空白 B 預覽確認還原 → 關頁重開 → B 再匯出」。兩份 JSON 均為 4,643 bytes 且逐位元組相同；精確 cents、原 ID／關聯、歷史版本與快照、revision、撤銷及操作順序逐欄保留。B 更改並軟刪除還原的手動帳目後，revision 精確增加兩次、操作新增兩筆；A 再匯出仍與原檔相同。這是本輪**實際看到檔案落地**的合成驗證，與上一輪使用者手動確認及當時工具未捕捉下載的紀錄分開。
+- 唯讀檢查確認兩來源的 IndexedDB、Service Worker 範圍與 CacheStorage URL 依來源分離，靜態快取不含帳目；原 `127.0.0.1:8767` 帳本未操作。另補還原配額錯誤測試，確認拒絕後無帳本／標記殘留且不顯示底層訊息；既有損壞／超限、非空／重複、交易中止及 revision 測試維持通過。僅修改隔離測試與文件，沒有產品程式、資料庫、備份格式、依賴或啟動方式變更，因此版本維持 0.12.2。
+- Node 20 項、瀏覽器原生帳本 11 組／完整互通 14 組／頁面故障 7 組／入口故障 10 組及正式檔案防護 Python 隔離 438 項通過；Ruff、JavaScript 語法與 CRLF 相容差異檢查通過。真實配額耗盡、跨設定檔／手機、完整封包與正式帳本未驗證；合成搬移不代表可正式保存真實資料。備份 JSON 仍未加密，瀏覽器仍可能清除資料。
+
+## 0.12.1 — 2026-09-30
+
+### 本機合成驗證頁離線重新開啟
+
+- 新增範圍僅 `/local-first/` 的 Service Worker，完整快取首頁、CSS、本頁模組與既有本機 lossless-json，並在頁面受控制及全部必需檔案可用後才顯示「可離線重新開啟」。只攔截固定白名單靜態 GET，不攔截 `/tests/`、Python Web／OAuth、備份下載或使用者資料；帳目繼續保存在原 IndexedDB。
+- 新版先完整安裝、核對後才清理本功能舊快取，不清除其他快取或帳本。首次仍須啟動 `node tests/local_first_preview.mjs`，待就緒後停止服務，於相同瀏覽器設定檔及完全相同網址重開。瀏覽器可能清除快取或帳本；未加密備份仍須下載並妥善保存。未新增資料庫／備份格式／依賴、Python Web／Bot 入口或 schema 升級。
+- 單元測試先因缺少 worker 失敗，再驗證白名單、缺檔、更新失敗與舊快取保留；Node 20 項、完整正式檔案防護 Python 隔離 438 項、Ruff、JS 語法及 CRLF 相容差異檢查通過。實際 In-app Browser 在停止預覽服務並確認連接埠關閉、關閉頁籤後，同網址重新開頁並讀到合成帳本；離線新增、更改、確認軟刪除與第二次冷啟動後不復活已驗證。另一空白合成來源 `http://localhost:8767` 在停服後離線還原九類資料，關頁重開仍保留。既有原生 IndexedDB 11 組、表單 6 組、備份互通 14 組、入口 5／8／9 組瀏覽器測試重新通過，停服下 `/tests/` 拒絕連線。瀏覽器使用現有 In-app Browser 測試設定檔，未另建全新 profile；下載請求已顯示，但工具未捕捉完成檔案，故未確認備份實際落地。其他瀏覽器／實體手機、正式帳本／OAuth 及快取淘汰未實測。
+- 原樣 `git diff --check` 因工作區原有 CRLF 行尾回報空白警告（exit 2）；以 `core.whitespace=cr-at-eol` 執行則通過，另逐一檢查本輪接觸的檔案均無行尾空白。未調整無關檔案的行尾。
+
+## 0.12.0 — 2026-09-30
+
+### 移除生活記帳與投資 AI 功能
+
+- 移除本地 Ollama 呼叫、自然語言查詢計畫、AI 分類建議、生活分析文字、投資 AI 摘要、AI 同意流程及其專屬程式／測試。`!問`／`!ask`、`!分類建議`、`!記帳分析`、`!分析`／`!analyze` 與 `!help ai` 不再提供；生活看板「生活 AI」與投資面板「AI」分頁一併移除。
+- 保留生活消費、月報、週／月回顧、預算、固定／訂閱／分期、搜尋、比較圖表、Web／本機驗證頁及可攜備份；投資持倉、交易、行情與非 AI 統計照舊。`aiohttp` 仍是 `discord.py` 所需依賴，因此不移除。
+- 新資料庫初始化不再建立 `ai_preferences`；舊資料庫若已有此表，升級、匯入、清除與復原不執行刪表或清除舊偏好。帳號 ZIP 格式與預算攜帶規則不變，匯入不再讀寫舊 AI 偏好；既有備份與使用者資料不重寫。同步移除現行使用說明中的 AI 入口，明示目前不會把帳目送往本地模型。歷史版本紀錄保留原貌。
+
+### 啟動、驗證與限制
+
+- 無新增套件或 schema 升級步驟。更新前依既有維護流程停止舊 Bot／Web 並備份，兩端改用同版程式後重新啟動；本輪只在隔離 SQLite 驗證，未啟動或升級正式帳本。
+- 修改前 447 項完整隔離測試通過；移除 AI 專屬測試、加入新舊資料庫與入口相容檢查後，相關 101 項及完整 438 項通過。Ruff 與差異／空白檢查通過。未驗證真 Discord 私訊／面板、真 OAuth、正式共用帳本、實體手機、正式備份與長時間運作；隔離測試不等同正式資料驗證。
+
+## 0.11.28 — 2026-09-30
+
+### 本機合成帳本完整備份入口
+
+- 獨立本機驗證頁首次開啟空白帳本時顯示「開始記帳／從備份還原」，不再自動初始化；明確開始才建立預設帳本，既有帳本直接進原記帳頁。讀取不建立帳目、標記或操作紀錄；不完整的非空帳本不會被當成空白覆蓋。
+- 還原選擇 JSON 後沿用既有完整 v1 保真驗證及格式／本機容量上限，僅預覽九類資料筆數；使用者確認後才在單一 IndexedDB 交易內重查完全空白並寫入帳本和建立標記。取消、錯誤、超限、非空或交易中止不清除、不合併、不產生半套資料；成功後重新讀取。原獨立 `-portable-checks` 互通測試入口與契約維持。
+- 已建帳本的「資料管理」提供固定檔名、UTF-8 JSON v1 的完整備份下載請求；既有匯出函式採 readonly 快照，不修改帳本。明示僅合成測試、JSON 未加密且下載後須自行確認檔案保存；沒有正式資料搬移、離線載入、PWA 或 App。
+
+### 驗證與啟動
+
+- 先以隔離瀏覽器案例重現首次開頁自動建帳，再修正；另以失敗案例補還原摘要與取消後的鍵盤焦點。新合成案例涵蓋明確建立、九類資料／超安全整數往返、無效與16 MiB超限檔、200筆消費／1000筆操作上限、取消、非空拒絕、寫入 request success 後 abort 全回滾、唯讀下載及關閉／同來源重開。新入口的開始、還原、故障案例分別通過5、8、9組；既有互通14組、IndexedDB11組、記帳頁故障／安全6組重新通過。舊表單測試修正「提示更新但按鈕尚未重新啟用」的等待競速。Node純規則／格式16項及完整正式檔案防護 Python 隔離447項通過；Ruff、JS語法及差異／空白檢查通過。
+- In-app Browser 使用獨立合成測試資料庫與 `http://127.0.0.1:8767` 靜態來源，檢查桌面1280px／窄版375px無水平溢出、九類摘要、錯誤提示及鍵盤開始／取消。合成 Blob 位元與匯出前後帳本一致；瀏覽器下載事件未被工具捕捉，**未確認檔案實際落地**。未測正式帳本／備份、真 OAuth、實體手機、真正儲存配額耗盡或正式搬移；隔離驗證不等於正式資料驗證。
+- 執行 `node tests/local_first_preview.mjs` 後開啟 `http://127.0.0.1:8767/local-first/`；Node 只供應靜態檔案。Python Web／Bot、OAuth、SQLite schema 及既有啟動方式不變，沒有正式資料庫升級步驟；未 stage、commit 或 push。
+
+## 0.11.27 — 2026-09-29
+
+### 歷史零元預算相容修正
+
+- `spending.month_report()` 接受既存／合法備份還原的明確零元總預算及分類預算，與未設定保持不同。精確cents計算剩餘／超支；零元的 `used_percent=None`，不產生Infinity／NaN或虛構百分比。負數、非整數cents仍以安全錯誤拒絕；不修改資料列或歷史小數台幣預算契約。
+- 共用 `alerts()` 跳過零元百分比門檻，手動新增／更改、提醒設定及固定／訂閱／分期入帳不再除以零；正預算門檻／去重及分類合計限制保持。新增／更改預算仍需正整數台幣；分類預算合計為零時拒絕寫入總預算，不因跳過提醒開始允許新零元輸入。
+- 首頁保留零元預算、已花、剩餘／超支及停用分類狀態，明示零元無法計算使用率，省略其百分比與進度條。Dashboard、本月回顧、既有月報／分類AI查詢只補None相容，保留金額及安全／唯讀契約，不新增Discord功能。
+- 更新三份可移植性／格式／瀏覽器驗證文件，解除原Python零元摘要限制的過時說明；備份v1、SQLite／IndexedDB結構、容量、CSV／ZIP與local-first程式未變。不新增依賴或使用者入口，無正式資料搬移。
+
+### 驗證與啟動
+
+- 整理前相關隔離209項通過；新增10項回歸先重現零元摘要拒絕、提醒除以零、首頁失敗及本月回顧number(None)錯誤，再修正。完成後相關核心／Services／Web／備份／移轉／Discord／rollback隔離269項、完整正式檔案防護隔離447項通過（子集不另加總）；Ruff及差異／空白檢查通過。
+- 合成資料涵蓋未設定／零元、無消費／精確超支／超JavaScript安全整數、停用歷史分類、四來源寫入、正預算提醒及限制、零元輸入拒絕、非法cents寫入回滾。OAuth替身確認首頁context／HTML、POST寫入及隱藏百分比／進度；完整備份往返、Node保真JSON→Python暫存SQLite還原後摘要一致，帳目／撤銷紀錄／設定與歷史保持。
+- 本輪未實測瀏覽器布局、實體手機、真OAuth、正式Web／Bot共用帳本或正式備份；隔離驗證不等同正式資料驗證。測試沿用正式檔案防護，未讀写正式data.db／Token／.env／備份／既有匯出或使用者資料；未stage、commit或push。
+- 現有Web／Bot啟動流程不變，依既有方式重啟即可；本輪沒有新增schema或資料庫初始化／升級，不操作正式帳本。
+
+## 0.11.26 — 2026-09-29
+
+### 完整生活帳本備份／IndexedDB 互通核心
+
+- 新增 `local-first/backup.mjs`：無DOM／IndexedDB／網路／OAuth／時鐘的純解析／驗證／序列化，沿用life-ledger-backup／v1原型別及九類data。保存四來源、有效／voided、未來已存、cents／revision、付款名稱快照、全部月份預算含明確零元、分類override／停用、規則／歷史版本、捷徑／必要設定、before／undone／操作顺序與已入帳唯一標記，不套用新增表單的歷史限制、不補預設／改名／同步或生成操作。
+- 固定本機 **lossless-json 4.3.1**，來自官方作者的npm發行套件；未改UMD／source map，完整MIT／2016–2026 Jos de Jong聲明及來源／套件／各檔SHA-256／registry integrity保存於 `local-first/vendor/lossless-json-4.3.1/` 與 `THIRD_PARTY_LICENSES.md`。核對執行期無依賴、source map內嵌皆自身八模組；同發行檔在瀏覽器UMD與Node CommonJS使用，不新增npm專案／lockfile／建置流程／Python依賴、CDN或遙測。
+- JSON整數先BigInt解析，安全小整數才轉Number；cents／ID仍為規範字串。超安全範圍revision／periods／position原生structured clone，不保存LosslessNumber prototype、不改全域原型；再匯出仍為原JSON整數token，沒有四捨五入或改成引號字串。手動操作精確比對revision、signed 64-bit最大值遞增安全拒絕。
+- 嚴格16MiB／UTF-8無BOM／12層／100000列／4096 Unicode字元／signed 64-bit、精確必需欄位、型別／日期／月份／cents、全域ID／引用／來源／規則／分期、版本與已入帳月份唯一、before不可變欄位及設定白名單；非法即拒絕，不修復／略過／截斷。審查發現套件接受值相同的重複key及吞掉未知 `__proto__`，先RED再於既有深度檢查補每層鍵檢查（含轉義拼法），官方字串解碼與完整語法解析保持，不另寫通用parser或改Python契約。
+- `ledger.mjs` 沿用單store／全快照交易，內部狀態v2保存九類資料；IndexedDB名稱／version1／store不變。只對明確舊本機v1四清單狀態唯讀補空欄位，下一次成功手動操作才保存v2，不丟歷史、不寫入讀取升級；損毀狀態與缺欄位備份仍拒絕，沒有正式遷移。
+- 新 `restorePortableBackup()` 只接受獨立 `-portable-checks` 測試DB，先完整驗證與容量檢查，再於readwrite重新確認store無任何鍵；既有帳本／建立標記／預設付款／undefined鍵均拒絕，不清除。帳本／標記同交易complete才成功，failure／abort全回滾；`exportPortableBackup()` readonly快照、不初始化／補記。空白ID可用故原樣保留所有引用／before／顺序，不重建UUID。
+- 本機上限仍 **200消費（含軟刪除）／1000操作**；原格式上限分開，超限拒絕整份、不匯入前幾筆。ponytail全快照容量限制維持；其他清單受原格式限制，不宣稱任意大量資料或增加索引／儲存抽象。匯入自動來源只保存／讀取，不提供管理、改日、同步／入帳／提醒。
+- 新合成fixture、Node／Python雙向與原生IndexedDB測試入口；預覽工具僅增加精確靜態白名單，`node tests/local_first_preview.mjs` → `http://127.0.0.1:8767/tests/local_first_portable_browser.html`。該測試只重設自身 `-portable-checks`，主頁沒有檔案匯入／下載按钮，現有Python Web／Bot／OAuth／SQLite schema／CSV／ZIP／啟動不變，不需正式初始化／升級。
+
+### 實際驗證與限制
+
+- 改動前相關Python隔離52項通過；新純格式測試因模組缺少RED、原生還原因介面缺少RED，再逐項實作。Node原9項加新7項共16項通過；新增Python3項核對實際Python合成匯出、109種輸入與原read_backup接受／拒絕一致、Node保真輸出→Python空白SQLite還原。精確金額／大整數、全部欄位與歷史關聯、操作快照／順序、設定null／空清單、格式／容量／安全皆核對。
+- In-app Browser於 `http://127.0.0.1:8767` 原生互通14組通過，涵蓋九類保存／超安全整數／歷史合法值、readonly／無預設、非空／只有標記／預設拒絕、兩原生連線競爭至多一成功、request success後abort帳本／標記全回滾、手動大revision與上限／舊revision、空資料／只有設定、200／1000邊界及超限、舊v1只讀相容／損毀拒絕。
+- 既有手動IndexedDB11組與原頁面故障／安全6組重新通過，儲存失敗保留輸入、帳目／操作同交易、惡意文字不生成HTML、取消／確認刪除不退化。三測試頁錯誤／警告為空；互通惡意分類只以文字再匯出，沒有生成img或額外script，不修改主頁布局或新增按鈕。
+- 已完成真實瀏覽器關閉頁面後同來源 `?resume=1` 重開，不重設／重新還原，全部資料仍在；實際再匯出由Python read_backup接受，完整中立欄位／引用／before／操作順序一致。暫存SQLite還原後，同日期基準摘要／預算／比較、撤銷／revision與固定補記一致，已入帳不重複、voided不復活；產品沒有呼叫PythonAPI。來源明確零元總預算仍完整保留，原month_report會拒絕該月份，測試確認還原後同樣拒絕，不改預算規則或假稱此月份摘要正常。
+- 完整正式檔案防護隔離 **437項通過**（相關子集不另加總），包含舊備份／移轉／CSV／ZIP、核心／Services／Web／Discord；保留OAuth替身／暫存SQLite／dotenv防護及既有Authlib／Starlette警告。Node v24.19.0、Ruff、新JS語法、`git diff --check`／空白、授權原始位元與雜湊、文件版本／連結及既有內容保存核對通過；唯讀審查兩項P2已以失敗回歸修正，重查未發現剩餘可重現契約／安全問題。
+- 無正式使用者備份／搬移入口、覆蓋／合併／清除、自動入帳／預算管理／分析／復原按鈕、加密／簽章、Service Worker／離線載入／PWA／App／同步。JSON未加密、通知去重狀態不攜帶；後續Python重算仍可能再次提醒，本輪不重播通知。未驗證正式帳本／備份、真OAuth、實體手機／其他瀏覽器、真正配額耗盡或完整網路封包；不是整個網站local-first、正式備份或App相容。
+- 本輪19檔：新增backup.mjs、lossless-json四檔、Node純格式測試、Python互通測試／Node測試橋、合成fixture及原生互通HTML／MJS；修改ledger.mjs、靜態預覽白名單、README／CHANGELOG／第三方授權與三份可移植／瀏覽器文件。保留其他原未提交內容，分支／HEAD／index不變，未stage、commit或push；未讀寫正式data.db、Token、.env、備份、既有匯出或使用者資料。
+
+## 0.11.25 — 2026-09-29
+
+### 獨立瀏覽器本機記帳合成驗證頁
+
+- 新增 `local-first/index.html`／`style.css`／`page.mjs`：明確「測試用途，請勿輸入真實帳目」，只有五欄手動表單、有效消費清單、更改／摘要確認軟刪除與本機儲存狀態。文字安全呈現、無遠端資源；驗證／儲存失敗保留輸入，成功才清空。刪除失敗在確認視窗內提示，不提供undo／清除按鈕或其他新功能。
+- `rules.mjs` 純規則無DOM／時鐘／網路／DB，以精確十進位與BigInt處理正數整分、既有一般科學記號／Unicode十進位數字／底線，嚴格ISO日期與閏日、200字項目、有效分類／付款及原停用值保留。入口一次取得Asia/Taipei今天傳入；cents持久化為規範字串，千分位／元／尾零在呈現層。使用者確認極端非整分／下溢拒絕，與Python Decimal上下文異常有明確差異；Python與JSON規則案例不變。
+- `ledger.mjs` 專用IndexedDB `discordbot-localfirst-synthetic-v1`／version1、本機擁有者，不帶Discord ID／憑證；UUID字串ID、帳目13欄語意／付款快照／有序before操作對照備份v1。首次建立原子保存標記與預設付款，讀取不重建／不新增操作；readwrite交易內重新驗證有效手動帳目與expected_revision，帳目／操作同交易、complete才成功、失敗回滾，voided保留歷史。ponytail註解明示整份快照上限200消費／1000操作，無大量資料承諾。
+- 新 `tests/local_first_preview.mjs` 用Node標準庫只提供loopback白名單静態檔案；在實際worktree執行 `node tests/local_first_preview.mjs`，開啟 `http://127.0.0.1:8767/local-first/`。沒有npm／Python依賴、Web／Discord入口或啟動修改、SQL／schema／正式帳本初始化。更新README／可移植性紀錄及[專頁文件](docs/local-first-browser-validation.md)。
+
+### 實際驗證與限制
+
+- 改動前相關隔離基準162項通過；新增Node純規則9項先RED再GREEN，無OAuth／SQLite／網站。原生IndexedDB11組與原頁面表單6組隔離驗證通過，涵蓋精確科學記號／Unicode／大額合計、閏日、停用override／歷史付款、一次建立／純讀取、操作順序、軟刪除不復活、兩連線競爭與舊revision。原生request success後強制abort確認帳目與操作完整回滾；實際儲存失敗輸入保留、惡意項目／分類不產生HTML、取消刪除無寫入。另先重現刪除失敗錯誤被modal遮住，再補確認窗內提示，回歸通過；不是實際耗盡配額測試。
+- In-app Browser在 `http://127.0.0.1:8767` 完成新增／重整不重複／關閉分頁同來源重開／更改／取消及確認刪除、兩實際分頁舊revision拒絕。桌面內容1265px、375px原生iframe（內容360px）核對操作與scrollWidth=clientWidth；工具viewport覆寫未生效，未冒稱實體手機。停止静態檔案伺服器後已載入頁面仍完成新增／更改／刪除。主頁錯誤／警告日誌空，本機紀錄只有靜態GET，產品無網路API；無真正斷網與完整封包追蹤工具，未宣稱已驗證全部對外請求或離線重載。
+- 現有完整正式檔案防護隔離驗證434項通過（相關基準不另加總），保留OAuth替身／暫存SQLite／dotenv防護；既有Authlib／Starlette警告未停用。Node v24.19.0，新JS語法、Ruff、`git diff --check`、新檔空白、文件連結／版本及原內容保存核對通過。唯讀審查未發現9個初始程式／測試檔的具體問題；後續UI回歸自行核對。
+- 沒有完整備份匯入／下載／空白瀏覽器還原、undo介面、預算／比較／固定規則、Service Worker、離線首次開啟／重載、PWA／App、正式搬移或同步。備份v1 revision等JSON整數超過JS安全範圍的保真解析列為下一階段，沒有通用parser。資料只在瀏覽器設定檔／來源；清除網站資料可能丟失，換瀏覽器／協定／網域／埠不共享。未驗證正式帳本／真OAuth／Discord／正式備份／手機／跨瀏覽器／真正配額耗盡；不是完整local-first或App相容。
+- 本輪14檔：新增local-first五檔、tests/test_local_first_rules.mjs、tests/local_first_browser.html／.mjs、tests/local_first_ui_browser.mjs、tests/local_first_preview.mjs、docs/local-first-browser-validation.md；修改README.md、CHANGELOG.md、docs/local-first-preparation.md。保留73項無關原未提交內容與涉及文件的原歷史，分支／HEAD／index不變；未stage、commit、push，未讀寫正式data.db、Token、.env、備份、既有匯出或使用者資料。
+
+## 0.11.24 — 2026-09-29
+
+### 本人生活帳本可移植備份與空白帳本還原核心
+
+- 新增 `life_ledger_backup.py` 與薄Service `export_portable_backup()`／`restore_portable_backup()`，可信呼叫者提供擁有者、Service只正規化；單一UTF-8 JSON format=life-ledger-backup／version=1，記憶體產生，不寫正式備份目錄。本人跨表資料同一SQLite讀取快照，沒有截至今天或搜尋上限裁切，不註冊／初始化付款／同步／提醒／改帳。
+- 保存四來源消費、有效與voided、精確cents十進位整數字串、日期／分類／用途／來源／revision、付款快照與引用、規則／月份唯一標記、分類override／停用、付款方式、全部月份預算、固定／訂閱／分期及歷史版本、付款捷徑、操作快照／undone／順序。必要設定明確白名單：提醒門檻（null與明確空清單不同）、記錄開始日；不攜帶其他人、非生活／投資、原身分、AI同意、OAuth／Token／session、通知內容／狀態、導覽紀錄或圖表資料。
+- 備份內使用穩定字串id，還原映射至目標新SQLite id，包括付款／規則／版本／消費／捷徑／操作與before快照的目標擁有者及引用。保留原歷史金額、日期、付款名稱、revision、已入帳與撤銷標記；不逐筆重新新增、不另生成操作或規則版本，不重算歷史、不送出／重播通知。既有未關聯自動來源及舊schema快照4欄預設相容有明確定義，其他非法來源關聯／快照拒絕而不修復。
+- 嚴格解析後才取得原 `BEGIN IMMEDIATE` 寫入交易，再檢查目標12個生活表均無任何資料，包含預設付款方式、停用／撤銷、孤立／非消費、通知／導覽。非空拒絕、不清除、不合併／覆蓋；所有還原同一交易，故障完整rollback，目標及他人投資／帳號安全狀態不變。沒有資料表、schema、依賴、啟動流程、Web／Discord／CLI入口變更；舊CSV／帳號ZIP／主機備份完全保持，特別保留舊ZIP本月及未來預算／目標有預算即略過的契約。
+- 新[格式文件](docs/portable-life-ledger-backup.md)逐項記錄必需欄位、型別／關聯、操作順序、空白定義與上限：16MiB、資料列合計100000、JSON深度12、文字4096字元、SQLite 64bit單值；拒絕未知欄位／版本、重複key／id／唯一標記、浮點／NaN／Infinity、bool整數、非法引用／超限。更新[可移植性紀錄](docs/local-first-preparation.md)的完成與後續範圍。JSON未加密、無hash／簽章／來源認證，含財務資料；排除通知去重狀態後，正常後續重算可能再次提醒，不宣稱已搬移提醒歷史。
+
+### 實際驗證與限制
+
+- 整理前相關核心／Services／備份／移轉／維護基準 **114項通過**。新增 **26項隔離測試**，主要17項先因缺少核心RED再GREEN；輸入型別／來源快照及審查修正也先重現再補最小驗證。涵蓋四來源／撤銷／未來已存、精確小數／大額合計、跨月／年／閏日／短月、有限分期／歷史版本、全部月份／零元／停用預算、override／付款改名、捷徑／操作映射與撤銷revision、空資料／只有設定、10001筆完整輸出、本人／非消費隔離、唯讀／不補預設、超限／毀損／非法關聯／型別、非空拒絕及rollback。
+- 安全測試發現不可雜湊引用與來源BLOB操作快照會漏出未分類例外，已改為固定分類資料錯誤；測試自身一處漏取data節點先修正再核對，未放寬驗證。唯讀審查另重現before與當前source／recurring_id／period／kind不一致，使原撤銷留下錯配月份；新增失敗回歸後補不可變欄位一致性檢查，保留同月不同歷史日期，不套用現行表單限制。
+- 還原前後以同一日期基準核對中立內容、摘要／預算／比較及再匯出語意；隔離補記確認已入帳不重複、voided不復活。WAL交錯寫入確認跨表同一快照，兩連線同時還原只允許一方成功；故障觸發器核對所有表及SQLite序號回滾，不等同正式Web／Bot併發。
+- 相關核心／Services／Web／備份／移轉／固定支出／寫入可靠性 **279項通過**；完整 `tests/run_discord_validation.py` **434項通過**（子集不另加總）。使用worktree虛擬環境、OAuth替身／暫存SQLite及暫存正式檔案／資料庫防護啟動器，不讀真實.env，不停用測試／放寬安全檢查；既有Authlib／Starlette棄用警告保留。Ruff、`git diff --check`、新檔空白／文件範例／連結／版本及原內容保存核對通過。
+- 本輪沒有使用者入口或正式搬移操作，現有啟動方式不變，不需初始化／升級；未驗證真OAuth、正式帳本／備份／還原、瀏覽器／App／手機、本機免Python記帳或真正Web／Bot並行。隔離備份／還原核心不代表已完成local-first、離線使用、App相容或正式備份驗證；下一步才是本格式與既有中立規則案例的瀏覽器一次性帳本驗證。
+- 本輪7檔：新增life_ledger_backup.py、tests/test_portable_life_backup.py、docs/portable-life-ledger-backup.md；修改life_ledger_service.py、docs/local-first-preparation.md、README.md、CHANGELOG.md。保留69項無關既有未提交內容及涉及檔案原內容，分支／HEAD／index不變，未stage、commit或push；未讀寫正式data.db、Token、.env、備份、既有匯出檔或使用者資料。
+
+## 0.11.23 — 2026-09-29
+
+### Local-first 準備：第一輪架構整理
+
+- 新增 `life_ledger_rules.py`：以標準庫分離精確金額、月份／短月扣款日、預算輸入與分類合計限制、比較期間／每日金額／差額及百分比。明確傳入基準日期與已篩選資料，不讀時鐘、資料庫、session或Discord；保留整數cents及Decimal精度，不建立第二套帳目查詢或JavaScript核心。
+- `spending.py` 保留原公開函式名稱／參數／回傳、SQL、revision、軟刪除、唯一約束及交易；比較仍在同一讀取快照取得完整A／B後交給純計算，預算及自動入帳只重用原驗證／日期計算。舊 `sp.Decimal` 匯出維持備份相容，沒有搬動SQL或建立Repository／泛用儲存層。
+- 共用驗證移除分類、提醒、未來支出、撤銷衝突及未來月報的Discord指令提示，由 `presentation.discord_spending_error()` 在 `spending_commands.py`、`dashboard.py` 補回原入口訊息。既有Discord指令／互動與Web固定安全錯誤保留；沒有新增Discord功能、登入方式或錯誤框架。
+- 新增[可移植性紀錄](docs/local-first-preparation.md)，核對實際欄位／關聯、時間／來源／撤銷定義、Discord身分與SQLite id依賴、Jinja／Python限制、會初始化預設值的讀取介面及備份缺口。新增少量中立JSON測試案例，不是新儲存或備份格式。尚未實作瀏覽器本機記帳、免登入、離線使用、App、IndexedDB、PWA、同步或正式帳本搬移。
+- 沒有新依賴、資料表、schema／ID／儲存格式或預算規則變更。Web／Service／模板／CSS／JavaScript及現有0.11.22每日比較畫面完全保留；設定動畫、搜尋頁超寬等延後功能未動。沿既有方式重啟Web／Bot載入程式，無本輪初始化或升級步驟，不操作正式帳本。
+
+### 實際驗證與限制
+
+- 整理前相關隔離基準 **264項通過**；新增 **8項** 先RED再GREEN，其中純規則 **6項** 不需要OAuth、SQLite初始化或網站。涵蓋精確金額／無效值、預算限制、短月／閏日／跨年、零／未來／不等長／重疊比較、每日值／分類合計／總額、輸入不變及Discord提示。新鮮程序另確認純模組不載入DB、SQLite、Discord、Web、dotenv或投資核心。
+- 整理後相關核心／Services／Web／Discord／固定支出／寫入可靠性 **291項通過**；既有完整 `tests/run_discord_validation.py` **408項通過**（子集不另加總）。沿用正式檔案防護及隔離SQLite，未讀真實.env；首次子集執行遇到既有測試互相匯入的搜尋路徑問題，暫存啟動器加入tests路徑後建立基準，另修正一個子集模組名稱，未停用測試或放寬安全檢查。既有Authlib／Starlette棄用警告保留。
+- 核對 **66個原公開函式參數**、原SQL內容／順序、 **16組完整比較回傳物件** 及月報／圖表整理前後一致；查詢後合成帳本不變。獨立唯讀審查另跑97項相關測試，確認比較快照、固定規則、Service、Discord及備份相容，沒有列入408項之外加總。Ruff、`git diff --check`、新檔空白／JSON、版本／文件連結及原有內容保存檢查通過。
+- 本輪未實測瀏覽器、實體手機、真Discord OAuth、正式Web／Bot共用帳本／真並行、正式備份／還原或搬移；既有隔離備份測試不是完整可移植備份驗證。純Python整理不代表瀏覽器／App已能執行，仍需原Python伺服器、Jinja、OAuth及SQLite。
+- 本輪修改12檔：spending.py、presentation.py、spending_commands.py、dashboard.py、tests/test_spending.py、tests/test_discord_spending.py、README.md、CHANGELOG.md；新增life_ledger_rules.py、tests/test_life_ledger_rules.py、tests/fixtures/life_ledger_rules.json、docs/local-first-preparation.md。保留61項無關原未提交內容，分支／HEAD／index不變，未stage、commit或push。未讀寫正式data.db、Token、.env、備份、既有匯出檔或使用者資料，未執行正式初始化／升級。
+
+## 0.11.22 — 2026-09-29
+
+### 精簡 Web 支出比較
+
+- 累積線改為「每日支出比較」：沿用同批 A／B 帳目與同一 SQLite 讀取快照產生每日精確 cents，已發生無消費為零，各自截至實際統計終點；未來／超出期間沒有點、不延伸。相對日序對齊、直線與單日資料點，提示包含期間、日序、完整日期及當日金額；保留不等長／未結束／未開始提示，不宣稱節省或速度。
+- 移除專屬總額長條、文字、DOM、初始化與圖表 JSON 中無用總額欄位；最上方範圍／總支出／筆數摘要保留。分類比較長條與表維持原功能。A／B 每日表合併為預設關閉的「查看每日數據」，完整期間列於表上方，列日期採 MM/DD；已發生無消費為 0 元，未發生／超出期間為「—」，有固定說明。
+- 最小本頁 JavaScript 只篩選已生成表列，預設省略雙零／無數值列，「顯示所有日期」可還原全部已有統計日期；不影響折線、不增加 API／查詢。無 JavaScript 的初始 HTML 保留全部列；空結果與全部未來有正常提示，不為未來長期間建立假零表。
+- A／B 圓餅直接顯示，沿既有 CSS 桌面並排、窄螢幕上下排列；文字維持預設收合並使用「查看期間 A／B 占比數據」。各期間按自身金額由大至小、同額分類名固定排序，文字與提示占比一位小數／去尾 .0，正占比四捨五入為零時顯示 `<0.1%`；只改顯示、精確分母不變。沿全域分類色索引，排序不同仍同色；既有單一分類／關鍵字／零支出／未來提示保留。
+- 摘要與分類表統一「差額（A − B）」及正負金額：+1,000 元、−1,000 元、0 元，方向說明只出現一次；保留真實小數、原 B 基準百分比／零基準與不可比較狀態。
+- 維持 Web → Service → spending → SQLite，查詢唯讀、不補記；本人有效已入帳四來源 consumption、撤銷與非消費排除、session 身分、安全 JSON、文字替代與載入失敗降級不變。沒有新依賴、外部圖表資源、資料表／schema、Discord契約或其他功能更動；重啟既有 Web 並重新整理即可，不需本輪帳本初始化／升級。
+
+### 實際驗證與限制
+
+- TDD 先確認日值與頁面斷言 RED，再最小實作 GREEN；新增6項回歸，調整既有累積斷言。涵蓋700／60／0、每日 cents 合計、跨月／跨年／閏日／單日／不等長、未來／缺日、合併表與無 JavaScript 初始列、移除總額圖／保留分類圖、排序／精確分母／微小占比、正負零差額，保留四來源／篩選／隔離／撤銷／唯讀與惡意文字檢查。
+- 相關核心／Services／比較 **85項通過**，`tests.test_web_auth` **130項通過**，既有完整 `tests/run_discord_validation.py` **400項通過**（子集不另加總）。以 worktree 虛擬環境及暫存防護啟動器執行原測試，額外阻擋正式檔案／SQLite 並跳過專案真實 .env；測試用暫存 .env 不受影響。首次完整執行的11項失敗是防護啟動器未解析測試 SQLite 的 file URI，修正啟動器後重跑全數通過，沒有停用／放寬產品測試。既有 Authlib／Starlette 棄用警告保留。
+- 自有 JavaScript 語法及暫存 Node 呈現檢查通過：確認每日點、直線、獨立終點、完整日期提示、分類顏色與零列還原，並驗證 Chart 未載入仍能篩選；此檢查不列入 unittest 數量。Ruff、`git diff --check`、文件版本／連結與原有內容保存核對通過。
+- OAuth替身與一次性合成 SQLite 的 In-app 瀏覽器實際確認四張圖、每日提示「期間 A／2026-09-01／當日700元」、合併表預設收合／省略雙零列／全日期還原、圓餅直接顯示／占比文字收合、固定分類同色及 `<0.1%`。375px／1280px排列無頁面水平溢出；模擬 Chart.js 404後仍能開啟完整文字及切換全日期。正常頁 error／warn 為空；模擬404屬刻意失敗，非正常載入錯誤。
+- 另以只開啟比較頁的獨立暫存帳本核對所有資料表不變（8筆合成帳目、1筆規則、不補記）。第一份預覽登入後經首頁時，既有付款方式 INSERT OR IGNORE 會推進 sqlite_sequence；不是比較查詢寫入，未擴張本輪修正。預覽與正式帳本無關；實際停用 JavaScript、完整對外請求追蹤、真Discord OAuth、外部瀏覽器、螢幕閱讀器、實體手機、正式 Web／Bot共用帳本及極長期間效能未驗證，不能以隔離測試代替。
+- 本輪修改8檔：spending.py、web/routes.py、web/templates/comparison.html、web/static/comparison_charts.js、tests/test_comparison_charts.py、tests/test_expense_comparison.py、README.md、CHANGELOG.md。沿用既有 CSS／Service／本機第三方資源；保留其他未提交變更，未stage、commit或push。未讀寫正式data.db、Token、.env、備份、既有匯出檔或使用者資料，未操作正式初始化／升級。
+
+## 0.11.21 — 2026-09-29
+
+### Web 支出比較圖表
+
+- 在既有 `/compare` 加入「累積支出比較」折線、總支出長條、完整分類水平成組長條、A／B 各自分類圓餅，共五張圖；沿原表單、session 身分、日期／分類／字面關鍵字 AND 驗證與原文字摘要、差額、B 基準百分比、分類表和期間提示，一次查詢一起更新。沒有新增條件、明細操作、匯出、Discord 功能或其他頁面布局。
+- 累積線以相對第 N 天對齊並提示並非同一日曆日期，提供實際日期及精確累積金額。已發生日無消費沿前值、單日保留點、直線不平滑；各線停在自己的實際統計終點，不延長短期間或補未來資料。總額與分類共用零起點比例尺，尚未開始不畫成零，保留期間長度／完整程度不同提醒，不新增平均、速度或預測。
+- 分類圖沿表格完整排序與聯集、不截斷或合併，A 實色、B 淡色與外框，容器高度隨數量增加；同分類在圓餅與分類長條使用一致顏色。圓餅分母各自符合條件總額，只省略零扇形；全未來、零消費及單一分類各有文字提示，單一分類無資料使用空結果，關鍵字占比範圍明示。圖例不切換系列，關閉動畫，桌面並列、窄視窗上下排列。
+- 核心 `expense_comparison()` 在既有單一讀取交易取得的完整帳目上增加每日 int cents 累積與各自分類占比，未增加 SQL／查詢／同步／寫入，總額、分類及終值一致；薄 `life_ledger_service.py` 原介面可直接傳遞，無需修改。涵蓋四種有效已入帳生活消費、排除他人／撤銷／非消費／未入帳預測，不受搜尋顯示上限影響，保留 Discord 手動搜尋契約及原百分比基準。
+- Web 建立最小圖表資料：cents 用十進位整數字串保留精度、金額及占比標籤由伺服器格式化，JavaScript 只轉換繪圖座標；不序列化整個 Decimal 比較物件、原始帳目、使用者 ID 或 OAuth。Jinja `tojson` 安全處理惡意分類，沒有 eval、innerHTML、API 或另一套統計。保留圖表無障礙標籤與完整原生文字數據；預設隱藏 canvas 容器，繪圖成功才顯示，失敗清除圖表並保留提示、表單、摘要與數據表，避免空白佔位。
+- 瀏覽器驗證發現新分類 canvas 與既有分類選單 ID 重複，已先補失敗回歸並改用 `comparison-category-chart`，選單原 ID 不變；另補未繪圖容器隱藏回歸。沒有調整安全驗證或停用既有測試。
+
+### 第三方資源與啟動
+
+- 從 [Chart.js 官方 v4.5.1 發行](https://github.com/chartjs/Chart.js/releases/tag/v4.5.1)取得本機 UMD 與原始 source map，2026-09-29 核對最新穩定版本；官方套件與各檔案 SHA-256 記入 provenance.json，不修改第三方壓縮程式。保留完整 Chart.js MIT 授權、內嵌 @kurkle/color 0.3.2 官方 MIT 授權及各原始版權聲明；版本、來源、用途與連結見 [第三方授權](THIRD_PARTY_LICENSES.md)。
+- Chart.js 與本頁腳本僅比較頁載入，靜態資源全在本機 `/static/`，不使用 CDN、外部字型、adapter、圖表外掛、遠端圖表 API 或遙測，沒有 npm／Node 建置或新 Python 依賴。沒有資料表／schema 變更，本輪重啟既有 Web 即可，不需初始化或升級帳本；圖表不需對外下載不代表 Discord OAuth 可離線登入。
+
+### 實際驗證與限制
+
+- 新增16項測試（8核心、7 Web、1第三方資源），主要功能及兩項瀏覽器修正均先 RED 再 GREEN。涵蓋逐日／缺日／單日／終值、不等長／重疊／跨月／跨年／閏日、部分／全部未來、零基準、分類／字面關鍵字 AND、停用歷史分類、四來源／隔離／撤銷、10001筆完整統計、精確小數、分類合計與占比、更改／軟刪除更新；另核對同一 WAL 快照、一次台灣日期、唯讀不補記、session／安全 JSON／必要彙總、資源僅比較頁、無障礙文字與降級。不把分開的圖表查詢或 JavaScript 加總當作精確統計。
+- 相關核心／Services／比較 **79項通過**，完整 `tests/run_discord_validation.py` **394項通過**，包含既有 Web、Discord 與寫入可靠性；子集不另加總。Ruff、`git diff --check`、自有新檔空白、版本／本地文件連結及原有內容保存核對通過。既有 Authlib／Starlette httpx 棄用警告保留，未改依賴。
+- OAuth替身與一次性合成 SQLite 的 In-app 瀏覽器：五張圖均實際繪製，原表單更換條件後圖表、摘要、分類表同步；總額提示1,070.29元、單日累積提示2026-09-02／1,000.29元、居住圓餅1,000.29元／93.46%正確。確認 A24點／B31點獨立終點、半年截至2026-09-24的86點／全未來不繪製、零結果、單一停用分類、關鍵字及16分類1008px高度。375px／1280px排列與圖表無橫向溢出，正常新分頁 error／warn 記錄為空；修正前遇到的 context 錯誤已處理並補測，沒有把舊分頁保留的舊錯誤算成修正後錯誤。
+- 測試伺服器以獨立來源及僅測試的 cache-busting 模擬 Chart.js 404，確認容器全部隱藏、沒有空白佔位，原表單、摘要、19分類表與可展開完整累積數據仍可用；恢復資源後五圖正常。測試開關與一次性啟動器不在產品中。瀏覽後帳本仍為22筆合成手動帳目／169629 cents、1筆規則、0筆自動消費，比較沒有補記或改帳；測試伺服器已停止、視窗覆寫已復原。
+- 獨立唯讀審查複核本輪增量、實際頁面腳本配置及失敗清理，另跑16項隔離測試全數通過，未發現尚需修正問題；不是審查者的真瀏覽器或正式帳本測試。未驗證實際停用 JavaScript（已檢查初始 HTML／noscript，並實測資源404降級）、完整瀏覽器對外請求追蹤（工具只可觀察本機伺服器收到的路徑；模板與腳本無外部載入／請求）、真Discord OAuth、外部瀏覽器、螢幕閱讀器、實體手機、正式 Web／Bot共用帳本／真並行及任意極長期間效能。逐日累積與文字數據按完整實際天數產生，不靜默截斷；未宣稱無限範圍效能保證。
+- 本輪修改15檔：spending.py、web/routes.py、web/templates/comparison.html、web/static/web.css、tests/test_expense_comparison.py、README.md、CHANGELOG.md；新增tests/test_comparison_charts.py、web/static/comparison_charts.js、THIRD_PARTY_LICENSES.md，以及vendor/chartjs-4.5.1下UMD、map、兩份完整授權與provenance.json。保留52項無關既有未提交內容及涉及檔案的原有修改，分支／HEAD／index不變，未stage、commit或push。未讀寫正式data.db、Token、.env、備份、既有匯出檔或使用者資料，未操作正式初始化／升級；設定動畫、搜尋頁手機超寬等延後功能維持未實作。
+
+## 0.11.20 — 2026-09-29
+
+### Web 支出比較
+
+- 首頁新增獨立「支出比較」入口與單一 GET 表單：期間 A／B 各開始、結束日期，分類預設全部／可選單一分類，消費項目關鍵字選填。預設核心台灣本月與上月首日至月底；每次查詢只取一次今天，兩段日期含邊界，可跨月／跨年、不相鄰、不等長、重疊或含未來。沿用 Web 嚴格日期解析，只對比較頁允許未來，搜尋／CSV 的非未來日期契約不變。
+- 分類與既有搜尋的字面關鍵字採 AND，同時套用 A／B；停用分類與只有有效歷史帳目的分類仍可查，分別標示已停用／歷史，不重新啟用。錯誤保留日期、分類與關鍵字，無效條件不執行統計；session 為唯一身分，外部 user_id／as_of／limit 不影響統計，未登入拒絕，固定安全 400／403／503 錯誤與 no-store，POST 不提供寫入功能。
+- 顯示所選與實際統計範圍、總支出／筆數及「尚未結束／截至 YYYY-MM-DD」。全部未來為「期間尚未開始」、總額／筆數未開始值，不當成實際零支出且不算差額／百分比；已開始的空結果可顯示 0 元與沒有符合條件。長度不同或任一未結束提示「期間長度或完整程度不同」，不宣稱節省或速度下降。
+- A 相較 B 使用整數 cents 計算多花／少花／相同，以 B 為基準的百分比用 Decimal，B 為零顯示無法計算。兩條原生 progress 長條採同一最大總額尺度，皆零使用安全尺度；分類表列任一期間出現的分類、各自支出與精確差額，單一分類／關鍵字篩選也套用分類統計。保留標籤、數字、無障礙文字及欄／列標題；千分位、元與去尾零只影響顯示。
+- 核心僅在原私有完整範圍查詢補分類條件與可共用連線，新增最小比較介面／薄 Service；選項與 A／B 的 COUNT、完整 items 使用一個 deferred BEGIN 讀取快照，總額、筆數及分類由同批精確資料計算。共用分類加總與原 report()，保留原欄位及呼叫者；Discord manual-only search_expenses() 不改。包含本人有效、未撤銷、已入帳手動／固定／訂閱／分期 consumption，排除他人、非消費與未來帳目，不受搜尋顯示筆數限制。
+- 維持 Web → life_ledger_service.py → spending.py → SQLite，Web 不查 SQL 或重建統計規則。比較 GET 完全唯讀，不同步固定支出、不初始化付款方式、不修改帳目；沒有新增 Discord 功能、明細操作、匯出、JS、依賴、資料表、預算規則或泛用報表框架。只加比較頁所需 CSS，設定動畫與搜尋手機超寬仍延後。
+- 本輪沒有 schema 或依賴升級，沿用既有啟動方式並重啟 Web 載入；尚未完成 0.11.19 升級者仍依該版既有維護流程處理。本輪沒有初始化或升級正式帳本。
+
+### 實際驗證與限制
+
+- 新增22項測試（12核心／Service、10 Web），分階段確認核心介面缺口12項及頁面缺口10項 RED，再最小實作 GREEN。使用 OAuth 替身與隔離 SQLite，涵蓋本月／上月、跨年／閏年、跨月／半年／不相鄰／重疊與長度、部分／全部未來、零值／B基準百分比、精確小數及分類加總、AND／字面關鍵字、停用／歷史分類、四來源、他人／撤銷／非消費排除、10001筆以上完整統計、新增／更改／軟刪除更新、無效日期／草稿／user_id注入與唯讀／安全錯誤。
+- 相關比較／核心／Services 53項、Discord既有搜尋7項通過；完整 tests/run_discord_validation.py **378項通過**，包含核心、Services、Web、Discord與寫入可靠性，子集不另加總。隔離 WAL 兩連線測試在 A／B 讀取間提交另一連線修改，確認 options／A／B／分類保持同一快照；不是正式 Web／Bot 多程序、斷電、效能或長期併發保證。
+- OAuth替身與一次性合成帳本的 In-app 瀏覽器：確認首頁入口、預設本月／上月、單一表單、精確總額／筆數、B基準75.46%、共同比例尺長條與分類表；停用分類＋關鍵字共同篩選、半年含未來與全未來提示、零結果／B零百分比及日期順序錯誤保留通過。375px／1280px沒有頁面橫向溢出；擷取1280px合成結果，視窗覆寫已復原。瀏覽後仍為原6筆合成帳目、無自動來源新帳目，已到期規則未被比較頁補記；測試伺服器已停止。
+- Ruff、git diff --check、新檔空白、文件版本／本地連結與原有內容保存核對通過。獨立唯讀審查核對5個既有產品檔案增量及2個新增檔案，另跑22項隔離比較測試全數通過，未發現需修正問題；不把審查子集另外加總。既有 Authlib／Starlette 的 httpx 棄用警告保留，未改依賴。
+- 本輪修改9檔：spending.py、life_ledger_service.py、web/routes.py、web/templates/home.html、web/static/web.css；新增web/templates/comparison.html與tests/test_expense_comparison.py；README.md與CHANGELOG.md。保留50項無關既有未提交內容及本輪涉及檔案內的原有修改，分支／HEAD／index不變，未stage、commit或push。
+- 未驗證真Discord OAuth、外部瀏覽器、實體手機、螢幕閱讀器或正式 Web／Bot 共用帳本／真並行；隔離 HTTP／SQLite／In-app 視窗檢查不等同上述驗證。未讀寫正式data.db、Token、.env、備份、既有匯出檔或真實使用者資料，沒有操作正式初始化或升級。設定柔和收合、搜尋頁手機超寬等延後功能維持未實作。
+
+## 0.11.19 — 2026-09-29
+
+### Web 固定支出管理與依預定扣款日入帳
+
+- 設定頁增加預設收合「固定支出」入口，Web 提供本人固定來源清單、新增／共用更改表單與停用確認；顯示啟用／停用、目前設定及下月待生效設定。不透過 ID 操作訂閱／分期，不要求內部 ID 或分期期數，不提供重新啟用、實體刪除或其他延後功能。
+- 消費項目、精確金額、分類、開始月份與每月扣款日沿核心驗證；新增限核心台灣本月／下月、本人有效分類，建立後開始月份唯讀。保留停用的既有或待生效分類，但不能新選其他停用分類，不重新啟用；金額沿現有千分位與去尾零格式，不改 cents 精度。
+- 使用薄 Service 與既有核心交易，Web 不查 SQL／重建入帳規則。session 身分、所有權與固定來源在核心檢查；寫入 POST／CSRF、PRG、固定安全錯誤與 no-store，外部 user_id／kind／periods／as_of／next 不改範圍。revision 在修改、停用確認與停用執行時重新檢查，衝突不覆蓋、保留安全草稿並要求重新載入。
+- 經使用者確認，固定／訂閱／分期全部由原同步核心改為依 due_day 到期才產生消費；null 舊設定為 1 日，29～31 日短月取月底，停機補記仍用原扣款日期。既有已入帳的日期／金額／分類不回寫；唯一 recurring_id＋period 約束保留，voided／撤銷自動帳目不會被同步復活。
+- 固定規則更改統一從下月生效，同一生效月份 UPSERT，最後一次成功設定取代前次；以前月份的版本保留供漏記補記。本月即使尚未到期仍用本月設定，規則修改不回寫單筆帳目；歷史更正沿既有單筆更改入口。
+- Web 補記方式為管理頁明確「補記已到期消費」POST＋CSRF，僅登入本人的固定來源、核心今天；GET／重新整理不入帳，新增已到期規則後需按補記。Web 可獨立使用，不需要 Bot 啟動；訂閱／分期沿既有 Bot 同步入口處理，沒有新增背景排程或 JavaScript。不是銀行連線或實際扣款確認。
+- 停用在單一交易內只補該規則已到期缺漏，再 active=0／revision+1；不提前產生未到期帳目，任一步失敗一起 rollback，保留歷史及版本紀錄。既有 stop_recurring() 改用相同交易核心，先檢查本人啟用規則，不再先同步所有規則後另行停用。
+- Discord 指令／按鈕／表單不增加功能，原手動搜尋、更改、自動日期唯讀等介面契約保留；既有背景同步及操作前補記沿原呼叫者、三來源套用新扣款日期。修正記帳說明與分析提示的舊「月初列支」文字。獨立審查發現待生效摘要附帶 user_id，已加失敗測試並在既有固定負擔摘要出口移除，保留原本地 AI 身分隱私契約。
+
+### 資料庫變更與必要升級步驟
+
+- 已確認的最小變更：recurring_expenses 加 revision INTEGER NOT NULL DEFAULT 0；新增 recurring_expense_versions 保存 user_id、recurring_id、effective_month、name、cents、category、due_day，規則＋生效月份為主鍵。只有固定來源建立歷程，訂閱／分期沿原規則欄位；未新增通用引擎、ORM、Repository、排程套件或其他依賴。
+- 沿 schema／db.init_db() 原初始化入口，在單一交易中補欄位並以原 start_month／設定、COALESCE(due_day,1) 建立初始固定版本；INSERT OR IGNORE 可重複，不覆蓋已安排版本、不重建消費。舊規則已入帳的月份完全保留，尚未產生的缺漏才依相應版本原日期補記；不能推測或還原資料中未保存過的舊設定。
+- 新歷程納入既有本人生活資料清除與整體復原的刪除標記清理，避免清除後復原舊版本；舊維護備份缺新表時僅略過該不存在表，其他復原檢查保留。未建立新備份功能或變更使用者 ZIP／CSV 契約。
+- 正式啟用前，由使用者停止 Web 與 Bot、依 [本機維護說明](MAINTENANCE.md)完成更新前備份，Web／Bot兩端載入同版程式、確認指向同一正確帳本，經既有 db.init_db() 初始化入口升級後再重啟。Bot 原啟動會執行此入口；Web 重啟本身不會升級 schema。此輪只對一次性 SQLite 初始化／升級，沒有操作正式帳本或備份。
+
+### 實際驗證與限制
+
+- 新增28項隔離測試（17核心／薄Service、9 Web、2清除／復原相容），主要行為先確認失敗再實作；另補歷史跨年及更改交易失敗回歸。涵蓋本人／他人／不存在／其他來源、CSRF拒絕零帳本查詢、精確金額、無效輸入與草稿、停用分類、revision與完整rollback；到期前／當日／之後、閏年／短月／跨年、停機漏記、下月／多次更改、已入帳不回寫、撤銷不復活及既有無付款日規則相容。
+- 完整 tests/run_discord_validation.py **356項通過**，含相關核心、Services、Web、既有Discord及9項寫入可靠性；子集不另加總。兩執行緒、兩SQLite連線的隔離同步確認唯一規則月份、單筆action／notice；不是正式 Web／Bot 多程序、網路、斷電或長期運行驗證。新消費的預算 cents、月曆原日期、搜尋及 CSV 內容一致，重複補記不增加帳目。
+- OAuth替身與一次性帳本的 In-app 瀏覽器：固定設定入口預設收合、單一表單、錯誤保留、新增、開始月份唯讀、下月明確年月／待生效、補記當月原金額與原日期、停用確認及保留歷史通過；375px／1280px清單無橫向溢出，重用現有CSS，沒有調整設定動畫或搜尋手機版。擷取375px合成資料畫面，測試伺服器已停止、視窗尺寸已復原。
+- Ruff、git diff --check、新檔空白、文件版本／連結與初始內容保存核對通過。獨立唯讀審查已跑最初27項新增測試並指出1項摘要身分欄位問題；主執行補第28項RED→GREEN並完成356項回歸，修正已複核。既有 Authlib／Starlette 的 httpx 棄用警告保留，不變更依賴。
+- 本輪修改15檔：schema.py、spending.py、life_ledger_service.py、service_safety.py、spending_commands.py；web/routes.py、web/templates/settings.html與新增fixed_list.html／fixed_form.html／fixed_stop.html；新增tests/test_fixed_recurring.py、tests/test_web_auth.py、tests/test_service_safety.py；README.md與CHANGELOG.md。保留42項無關既有未提交內容，分支／HEAD／index不變，未stage、commit或push。
+- 未驗證真Discord OAuth、外部瀏覽器、實體手機、螢幕閱讀器、Excel、正式schema升級、Web／Bot共用正式帳本或真並行／長期排程。未讀寫正式data.db、Token、.env、備份、既有匯出檔或真實使用者資料；設定柔和收合、搜尋頁手機超寬等延後功能維持未實作。
+
+## 0.11.18 — 2026-09-29
+
+### Web 完整消費搜尋與 CSV 匯出
+
+- 核心從既有月清單抽出共用範圍查詢，新增 `list_expenses_in_range(user_id, start=None, end=None, *, keyword="")` 與薄Service；涵蓋本人有效、未撤銷、已入帳的 consumption，包含手動／固定／訂閱／分期。嚴格日期兩端包含、字面關鍵字與 spent_on DESC,id DESC 排序，不複製SQL、不逐月拼接、不查預測或同步規則。月清單原 limit／offset／include_voided 與驗證順序保留。
+- Web搜尋接入新Service，保留原條件、草稿、安全錯誤、排序及單筆入口；搜尋可見不改更改權限，自動來源日期仍唯讀。舊核心／Service `search_expenses()`、`recent_expenses()` 的 manual 契約、Discord三欄／日期格式／每頁6筆與更改guard保持原樣，沒有新增Discord指令／按鈕。
+- 設定頁新增第四個原生「資料匯出」details預設收合，入口僅在設定頁；獨立 `GET /export` 使用核心台灣本月第一天至今天，`POST /export/csv` 驗證session與CSRF、兩日期恰一值／非未來／順序。外部user_id、keyword、limit、filename、path或next不影響範圍；空結果是正常200 HTML，錯誤固定400／403／503且no-store，保留安全日期草稿。唯讀下載直接attachment，不使用寫入PRG。
+- 標準庫csv在記憶體完整產生五欄「日期／金額／消費項目／分類／付款方式」、UTF-8 BOM及CRLF；Decimal從整數cents保留精確金額，三個文字欄對公式／前導空白及Cc／Cf加單引號副本防護，保持原帳目與歷史付款名稱。固定ASCII檔名及no-store，完整序列化後才下載；不限畫面筆數、不移植備份10000筆限制、不留下伺服器CSV或帳目日誌。
+- 頁面明示未加密、分析用、非完整備份／不能完整還原帳號，單引號可能可見；沒有CSV匯入。新匯出頁重用既有expense-panel樣式避免375px水平溢出；沒有修改CSS、設定動畫、搜尋手機超寬或其他延後功能。
+- 更新[規格](docs/superpowers/specs/2026-09-28-web-v1-csv-expense-export-design.md)與[TDD實作計畫](docs/superpowers/plans/2026-09-28-web-v1-csv-expense-export.md)的實際完成狀態。無依賴／資料表／資料庫結構變更，沿用既有啟動方式並重啟Web，不需正式資料庫初始化。
+
+### 實際驗證與限制
+
+- OAuth替身與隔離SQLite：基準相關147項與Discord搜尋6項通過；新增16項先確認缺少介面／四來源搜尋／CSV helper／路由與設定區塊會失敗，再最小實作。核心／Service／Web162項、Discord搜尋7項、寫入可靠性9項與完整 `tests/run_discord_validation.py` 328項通過，子集不另加總；涵蓋跨月／跨年／閏日／邊界、四來源、關鍵字／身分隔離、撤銷及非消費排除、10001筆完整性、精確金額／BOM／中文引號逗號換行、公式前綴、CSRF零查詢、user_id注入、安全header與固定錯誤、全業務表snapshot／禁止寫檔及原Discord相容性。
+- 隔離HTTP量測10001筆：508993 bytes、0.2646秒、Python tracemalloc峰值14091127 bytes；50001筆：2588993 bytes、1.3453秒、峰值70028214 bytes。皆確認完整筆數，包含query及CSV回應生成；這是合成資料、程序內測試與Python配置量測，不是RSS、真瀏覽器下載時間或正式帳本／任意規模的效能保證。仍採O(範圍帳目數＋CSV大小)記憶體且不靜默截斷。
+- OAuth替身、一次性帳本的In-app瀏覽器375px：設定入口預設收合、Enter展開、日期選擇、實際跨月下載及空結果保留日期通過；只讀本輪新下載的五筆合成CSV，確認BOM、五欄、1000.5／0.29精確金額、中文引用、公式前綴與歷史付款名稱。新匯出頁無橫向溢出，沒有實體手機或Excel開啟測試。
+- Ruff、`git diff --check`、新檔空白／文件連結／版本與原有未提交內容保存檢查通過；既有Starlette／Authlib的httpx棄用警告保留，沒有調整依賴。
+- 獨立唯讀審查核對本輪13檔增量、規格／計畫與必要呼叫者，未發現Critical／Important／Minor問題；審查未另跑測試或瀏覽器，328項及Ruff為本輪主執行結果，不虛構額外驗證。
+- 未驗證Excel或其他試算表相容性、真Discord OAuth、外部瀏覽器、螢幕閱讀器、實體手機及Web／Bot共用正式帳本／真並行。COUNT與items沿用分開讀取，匯出依完整items，不宣稱跨查詢同一瞬間快照。未讀寫正式data.db、Token、.env、備份、既有匯出檔或真實使用者資料；保留其他36項既有未提交內容，未stage、commit或push。
+
+## 0.11.17 — 2026-09-28
+
+### 文件補充：CSV 消費帳目匯出規劃（尚未實作）
+
+- 繁體中文[設計規格](docs/superpowers/specs/2026-09-28-web-v1-csv-expense-export-design.md)與[逐項實作計畫](docs/superpowers/plans/2026-09-28-web-v1-csv-expense-export.md)納入已確認決定：CSV入口只在設定頁新增獨立「資料匯出」details預設收合，說明未加密、分析用、非完整備份／還原；首頁與搜尋頁不新增入口，無動畫。
+- 規劃記錄「Web優先、未來再考慮App；Discord維護既有功能、停止新增且不要求同步」，共用核心仍保護既有Discord，必要資安／資料安全修正除外，不預建App架構或認證。移除直接放寬共用search及修改Discord文案的安排；舊核心／Service manual搜尋、更改guard與最近再記原樣。只補共享完整範圍清單／可選字面keyword與薄Service，Web搜尋和CSV重用；列出所有呼叫者及可見範圍與更改權限差異。
+- 後續順序為完整範圍隔離測試與核心／Service→Web四來源搜尋及原條件／排序／身分隔離→設定入口及CSV安全下載→Discord原搜尋／更改回歸。Web搜尋、月曆及CSV消費資格一致，含本人有效已入帳手動／固定／訂閱／分期；CSV完整跨月且不受搜尋呈現限制，Discord保留僅手動相容契約。以上全部尚未實作。
+- 保留URL-encoded POST／CSRF、session本人、五欄精確金額、標準庫CSV／UTF-8 BOM、文字副本公式防護、固定檔名attachment／no-store、記憶體直接下載及正常空結果；不做匯入、完整備份或投資，全部仍尚未實作。
+- 本輪只更新兩份規劃與本節，維持0.11.17，README／產品與測試程式／資料庫／依賴及啟動流程不變。文件增量、`git diff --check`、空白／本地連結／狀態／版本核對通過；原CSV格式／安全／效能設計與其他歷史紀錄完整保留，核對的程式檔雜湊不變。未執行功能測試、Ruff、瀏覽器或Excel，不宣稱功能或Excel相容通過。未讀寫正式data.db、Token、.env、備份、匯出或使用者資料，未stage、commit或push；下方驗證屬先前功能，不是CSV／搜尋修正結果。
+
+### Web 本月預算視覺化
+
+- 首頁原預算卡呈現總預算／已記錄支出／剩餘或超支、使用比例與原生 progress；比例以精確 cents 的 Decimal 計算，文字最多兩位小數且不截斷超支，視覺填滿最多100%。剛好用完顯示「剩餘 0 元（已用完）」；超支0.01元即使比例顯示100%，仍保留精確超支金額。金額沿用千分位、元與去尾零，不改帳本精度。
+- 分類預算使用原生 details，預設收合，標題「分類預算（N 項）」計入實際已設定項目；展開呈現完整清單，不截斷。無總預算仍可看分類，零消費呈現0元／0%，停用分類保留並標示；無分類預算不產生空收合區塊，仍有預算設定入口。總額位於收合區塊外。
+- `report()`追加total_cents及分類amount_cents；`month_report()`追加budget_cents／spent_cents／remaining_cents，直接使用原有整數合計，保留舊欄位型別與數值。歷史零／負預算於核心讀取拒絕，不除以零或修改資料；舊小數預算維持首頁安全錯誤。Service原樣轉交，無新增Service或SQL。
+- 首頁取核心台灣日期一次，表單與兩卡月份一致；摘要及月曆各查一次，重用快速記帳啟用分類，不同步固定規則。統計包含本人有效已入帳手動／固定／訂閱／分期，排除他人、撤銷、非消費與未入帳預測，未設分類預算的消費仍計入總額；保留session、CSRF、PRG、revision及原草稿錯誤處理。
+- 更新[設計規格](docs/superpowers/specs/2026-09-28-web-v1-budget-visualization-design.md)與[TDD計畫](docs/superpowers/plans/2026-09-28-web-v1-budget-visualization.md)完成狀態。沒有Discord指令／按鈕、依賴、資料表或啟動／升級程序變更；沿用既有啟動方式，重啟Web載入更新，不需正式資料庫初始化。設定／收合動畫、搜尋頁手機超寬及其他延後功能未實作。
+
+### 實際驗證與限制
+
+- OAuth替身與隔離SQLite：既有相關基準134項通過；本輪新增13項測試，先確認核心新欄位／非法預算、首頁context／日期及progress／收合HTML缺口會失敗，再最小實作。相關核心／Service／Web147項、完整`tests/run_discord_validation.py`312項通過，涵蓋大額十萬筆加0.01元、四種預算組合、零／用完／超支、ROUND_HALF_UP、停用／XSS、全來源／超過31筆、身分隔離、錯誤草稿及新增／跨月更改／軟刪除後摘要與月曆一致；既有CSRF、revision及rollback回歸保留。
+- 一次性帳本、測試settings與OAuth替身的In-app瀏覽器：320／375／768／1280px收合與展開均無首頁橫向溢出；確認桌面雙卡、窄螢幕上下排列、八項完整清單、長分類名、停用／零值／超支文字，Enter展開及Space收合、可見focus通過。這是瀏覽器視窗寬度檢查，沒有實體手機或螢幕閱讀器驗證。
+- Ruff、`git diff --check`、本輪新增區塊空白／文件連結與版本一致性檢查通過；保留原有Starlette／Authlib的httpx棄用警告，未調整依賴。
+- 獨立唯讀審查核對本輪11檔增量、完整規格／計畫與相關呼叫者，未發現需修正問題；另以TEMP連線限制重跑核心／Service／首頁卡57項通過。此57項為完整測試的子集，不另加總。
+- 真Discord OAuth、外部瀏覽器、輔助科技、實體手機及Web／Bot共用正式帳本未驗證。摘要與月曆各自讀取，不保證真並行寫入下的同一瞬間快照；本輪未新增跨查詢交易。未讀寫正式data.db、Token、.env、備份、匯出或使用者資料；原有45項未提交內容保留，未stage、commit或push。
+
+## 0.11.16 — 2026-09-28
+
+### 文件補充：本月預算視覺化規劃（尚未實作）
+
+- 新增繁體中文[設計規格](docs/superpowers/specs/2026-09-28-web-v1-budget-visualization-design.md)與[實作計畫](docs/superpowers/plans/2026-09-28-web-v1-budget-visualization.md)，核對既有首頁、設定頁、Service 與核心統計。規劃沿用原首頁卡，以金額及原生進度呈現總／已設定分類預算，保留停用分類、無總預算與超支資訊；分類清單是否預設原生收合仍待使用者確認。
+- 必要缺口限於現有摘要增加精確 cents 欄位、首頁沿用核心台灣日期及呈現資料／模板；不另建 SQL、Service、資料庫或圖表框架。以上全為後續規劃，尚未實作，本輪沒有產品程式、資料庫結構、依賴、Discord 指令或啟動／升級步驟變更。
+- 文件輪維持 0.11.16，README 版本不變。文件差異、`git diff --check`、新文件空白／本地連結／狀態與版本一致性檢查通過；核對的 60 個程式／測試／README／依賴檔案雜湊不變。未執行功能測試、Ruff或瀏覽器；下方既有產品驗證紀錄屬先前工作，不是本輪結果。未讀寫正式 data.db、Token、.env、備份、匯出或使用者資料，未 stage、commit 或 push。
+
+### Web 單筆帳目更改／刪除
+
+- 搜尋結果與月曆每日明細加入同一個單筆更改頁；只操作 session 本人、有效且已入帳的 consumption 消費。日期、金額、消費項目、分類及付款方式沿用 Service／核心規則；固定、訂閱與分期日期唯讀，修改／刪除不改來源、期別或後續排程。
+- 刪除前重新讀取並核對 revision，以已儲存摘要確認；執行沿用 voided 軟刪除、舊快照操作紀錄及同一交易 rollback，保留帳目資料，不執行 SQLite DELETE。成功後返回經驗證的搜尋／月曆條件並提示；統計同步排除已刪除帳目。不新增 Web 撤銷，既有最近操作撤銷可還原，但新操作會使舊 action_id 確認失效。
+- 四個新路由強制 session 所有權、POST／CSRF／原 expected_revision；忽略外部 user_id、expense_id 及 next。成功使用 303 PRG，失敗以固定 HTML 400／403／404／409／503 回應，頁面與錯誤 no-store；他人／不存在／撤銷／非消費回應一致。安全草稿不搭配新 revision，衝突僅供參考並請重新載入。
+- 共用錯誤模板為新帳目錯誤顯示「無法完成操作」，刪除衝突提供固定更改頁重新載入連結，避免重整過期 revision 的確認網址；未向 unavailable 回應加入帳目資訊。
+- 核心最小補充：公開兩種 ValueError 相容安全錯誤；分類改名對實際更名帳目增加 revision；付款選項新增 initialize_defaults=False 純讀取，原預設初始化不變。保留原停用分類、付款 ID／NULL／歷史快照；其他停用選項不可新選。日期、金額、undo 與交易流程未另建規則。
+- 依[規格](docs/superpowers/specs/2026-09-28-web-v1-expense-edit-delete-design.md)與[計畫](docs/superpowers/plans/2026-09-28-web-v1-expense-edit-delete.md)先補失敗測試再實作；獨立審查發現非 ASCII CSRF token 的例外，已以兩種 POST 回歸案例重現並修正為固定 403，刪除摘要亦補明資料保留。
+- 無 Discord 指令／按鈕、資料庫結構、依賴或啟動／升級步驟變更；沿用既有 Web 啟動方式，重啟 Web 載入新路由即可，不需正式資料庫初始化。未實作設定頁動畫、批次、大表格編輯或 Web 撤銷。
+
+### 實際驗證與限制
+
+- 全部自動測試使用 OAuth 替身與隔離 SQLite；完整 `tests/run_discord_validation.py` 299 項通過。相關核心／Service／Web 141 項及寫入可靠性 9 項通過；涵蓋本人更改、軟刪除、身分隔離、CSRF、兩 client 舊版本／核心寫入競態、無效輸入、ABORT trigger 完整 rollback、四來源、停用選項、undo 與同步統計。
+- Ruff、`git diff --check`、新增模板空白／文件連結與版本一致性檢查通過；既有 Starlette／Authlib 的 httpx 棄用警告仍在，未新增或更新依賴。
+- In-app 真實瀏覽器以 OAuth 替身與一次性隔離帳本走過兩入口、更改成功、錯誤回填、刪除摘要、取消／確認及返回搜尋；檢查自動日期唯讀、鍵盤 Tab 焦點與 320／375 px 新更改／確認頁、長摘要換行，無水平溢出。搜尋頁既有面板於 375 px 可用寬360／內容寬368，略微超寬，本輪未改原有面板樣式。
+- 未驗證真 Discord OAuth、真 Bot／Web 程序並行、Web／Bot 共用正式 SQLite、實體手機或其他外部瀏覽器。確定性隔離競態測試不等於正式並行驗證。未讀寫正式 data.db、Token、.env、備份、匯出或使用者資料；無 stage、commit 或 push，既有無關修改保留。
+
+## 0.11.15 — 2026-09-28
+
+### 文件補充：單筆帳目更改／刪除規劃（尚未實作）
+
+- 新增繁體中文[設計規格](docs/superpowers/specs/2026-09-28-web-v1-expense-edit-delete-design.md)與[逐項實作計畫](docs/superpowers/plans/2026-09-28-web-v1-expense-edit-delete.md)，核對既有 Web worktree、分支、版本、AGENTS.md、39 個未提交項目，以及 Services／核心修改、voided 軟刪除、revision、操作紀錄、撤銷與來源規則。
+- 使用者已確認保留核心日期限制：手動帳目可改日期；固定、訂閱及分期的已入帳帳目日期唯讀，單筆修改／刪除不改排程。文件列出安全入口、刪除摘要確認、CSRF／PRG／安全返回與隔離驗收；必要缺口限於安全錯誤分類、分類改名增加 revision、付款選項純讀取及 Web 頁面，全部尚未實作。
+- 設定頁更柔和展開／收合、避免突然跳動與版面位移只記錄為延後需求，未實作動畫或調整設定頁。
+- 本輪只新增兩份文件及 README／CHANGELOG 文件段落，不遞增功能版本；無產品程式、Discord 指令、資料庫、依賴或啟動／升級變更。不讀寫正式 data.db、Token、.env、備份、匯出或使用者資料，不 stage、commit 或 push。
+- 文件差異、`git diff --check`、兩份新文件的獨立空白／連結／狀態檢查及版本一致性核對通過。既有 37 個其他檔案雜湊不變，README／CHANGELOG 原內容完整保留、只插入本輪段落；Git index 雜湊不變，主 checkout 仍乾淨。本輪未執行功能測試、Ruff、瀏覽器、真 OAuth、正式資料庫或 Web／Bot 真並行驗證。下方既有產品驗證結果屬先前工作，不是本輪單筆帳目功能驗證。
+
+### Web 設定頁展開／收合
+
+- 設定頁預算、分類管理及付款方式管理改為原生 `details`／`summary` 區塊，可同時展開多個；初次進入預算展開，其餘收合。整列標題可操作，箭頭標示狀態，保留原表單與管理功能。
+- 成功提交後以固定 `section` 參數展開對應區塊；欄位／核心驗證失敗時也展開該區塊，顯示錯誤並保留有效解析的欄位輸入。CSRF 失敗仍回 HTTP 403 且不執行寫入，但顯示對應區塊與安全錯誤。區塊參數只接受 `budget`、`categories`、`payments`，不影響 session 身分或月份資料範圍；PRG 流程維持。
+- 新增鍵盤焦點樣式與至少 44px 標題點擊高度；未增加狀態偏好、JavaScript、依賴、資料庫或其他架構／功能，無啟動或升級步驟。
+
+### 驗證與未驗證事項
+
+- 依TDD先確認預設狀態及三區塊成功／失敗回應測試為RED，再完成修改。`tests.test_web_auth` 85 項、`tests/run_discord_validation.py` 279 項隔離測試通過；Ruff 通過。
+- `git diff --check` 通過；測試使用隔離 SQLite。未實測瀏覽器或手機版點擊、焦點呈現及水平溢出；未讀取或修改正式資料、Token、`.env`、備份、匯出檔或使用者資料。未 stage、commit 或 push。
+
+## 0.11.14 — 2026-09-28
+
+### Web 金額顯示與月曆導覽
+
+- Web 首頁預算卡、設定頁預算、搜尋結果及完整月曆每日明細共用金額格式，顯示千分位並移除不必要的小數尾零，例如 `1,000`、`100.5`、`100.25`、`0`；保留「元」與 `NT$` 單位。數值輸入欄位維持不帶單位及千分位。
+- 金額只變更呈現；消費 cents、預算資料、計算精度與資料庫內容不變，不進行四捨五入或截斷。
+- 完整月曆以「← 年月 →」顯示月份導覽，箭頭連結保留「上個月／下個月」無障礙名稱及滑鼠提示，支援鍵盤聚焦並具可見焦點；本月的下一月維持停用且不產生未來月份連結。「回到本月」保留。首頁小月曆原本沒有月份切換控制，未新增。
+- 未實作設定頁標題展開／收合；無資料庫、依賴、JavaScript、啟動或升級變更。
+
+### 驗證與未驗證事項
+
+- 依TDD先確認格式與導覽回歸測試失敗，再完成修正。`tests.test_web_auth` 82 項通過；`tests/run_discord_validation.py` 276 項隔離測試通過；Ruff 與 `git diff --check` 通過。測試使用暫存 SQLite，並檢查原始 cents 與合計維持不變。
+- 未做真實瀏覽器或手機互動實測；真實 Discord OAuth、正式資料庫及 Web／Bot並行操作亦未驗證。未讀取或修改正式資料、Token、`.env`、備份、匯出檔或使用者資料；未 stage、commit 或 push。
+
+## 0.11.13 — 2026-09-28
+
+### localhost Web 首頁本月預算與小月曆
+
+- 搜尋與設定入口移到快速記帳表單上方；下方新增本月預算與小月曆兩張卡片，桌面等寬並排、間距1rem，窄螢幕依序上下排列。首頁使用專用寬度，其他頁面的panel設定維持原樣。
+- 預算卡顯示本人本月已記錄支出、整數總預算、剩餘或超支金額，單位為「元」；消費與差額保留兩位小數，以Decimal轉cents計算差額。僅辨識「總額」預算，分類預算不自動加總為總額；無總預算時顯示固定提示與設定入口。舊小數總預算不截斷或回寫，改顯示固定資訊卡錯誤。
+- 小月曆採Monday-first與Mon–Sun七欄，只顯示日期和有效消費記號，今天及過去日期連向既有完整月曆明細。首頁與完整月曆共用日期呈現函式，未來日保留無連結日期格，原伺服器端日期驗證維持不變。
+- 每次首頁或錯誤回填只重用月份摘要與月曆Service各一次，資料範圍維持本人有效、未撤銷的consumption，含已入帳手動、固定、訂閱及分期；不自動同步固定規則。資訊卡讀取的TypeError／ValueError使用固定安全訊息，保留表單、草稿、原錯誤提示及HTTP狀態。
+- 保留OAuth、CSRF、PRG、付款方式／分類預設與快速記帳流程。既有付款方式讀取仍可能補建本人預設來源，其INSERT OR IGNORE也可能推進SQLite自動編號計數；隔離測試確認所有業務表資料未因資訊卡新增或變更。摘要與月曆仍分開讀取，並行寫入可刷新更新。
+- 未修改spending.py、life_ledger_service.py、資料庫結構或帳務規則；無新依賴、快取、JavaScript、圖表、API或啟動／升級步驟。
+
+### 驗證與未驗證事項
+
+- 依TDD確認缺少卡片context／查詢與HTML時為RED，再最小實作轉GREEN。`tests.test_web_auth`共81項通過（新增10項）；`tests/run_discord_validation.py`共275項隔離測試通過；Ruff與 `git diff --check` 通過。既有Starlette／Authlib的httpx棄用警告未影響結果。
+- 使用暫存SQLite、OAuth替身產生隔離靜態首頁，在瀏覽器實測320／375 px單欄、768／1280 px等寬雙欄，四種寬度的scrollWidth均不超過clientWidth；七欄日期可讀、未來日不連結，日期鍵盤焦點有可見外框。預覽已關閉，未使用正式帳本。
+- 真實Discord OAuth、Discord介面、瀏覽器完整記帳／日期跳轉、手機實機、Web與Bot並行操作及正式資料庫仍未驗證。未讀取或操作正式data.db、Token、.env、備份、匯出或使用者資料；本輪未stage、commit或push，保留先前未提交變更。
+
+## 0.11.12 — 2026-09-27
+
+### Web 預算與快速記帳文案
+
+- 設定頁已設定的總預算與分類預算顯示金額單位「元」；預算輸入框仍使用純整數值，不將單位放入欄位，維持整數顯示。
+- Web快速記帳首頁提交按鈕由「儲存消費」改為「記錄消費」；成功提示與其他文字維持原狀。
+- 無資料庫結構、migration、依賴或啟動／升級步驟變更。
+- 驗證：`tests.test_web_auth` 71 項通過；Ruff 檢查通過；`git diff --check` 通過。Web 測試輸出包含 Starlette／Authlib 的 httpx 棄用警告，未影響測試結果。未驗證真實 OAuth／瀏覽器操作；未操作正式資料庫、Token、`.env`、備份或匯出資料。
+
+## 0.11.11 — 2026-09-27
+
+### 預算整數規則與設定頁文案
+
+- 共用 `spending.set_budget()` 僅接受正整數台幣，不接受小數、零、負數或非數字；Discord 與 Web 預算設定共用此規則。一般消費仍沿用原有小數處理與資料格式。
+- Web 設定頁預算欄位提示整數、步進 1、最小值 1，伺服器端驗證仍由共用核心執行；預算顯示不帶 `.0` 或 `.00`。
+- 分類管理按鈕顯示文字改為「更改」；分類資料同步、原子性及 undo 相容規則不變。
+- 無資料庫結構、migration、依賴或啟動／升級步驟變更。
+- 驗證：`ruff check .` 通過；`tests.test_spending` 14 項、`tests.test_life_ledger_service` 15 項、`tests.test_web_auth` 71 項及 `tests/run_discord_validation.py` 265 項測試通過；測試使用隔離 SQLite。`git diff --check` 通過。未驗證真實 Discord／OAuth、瀏覽器互動或正式資料庫；未讀取或修改正式資料與憑證。
+
+## 0.11.10 — 2026-09-27
+
+### localhost Web v1 設定頁
+
+- 登入後首頁新增「設定」入口與受OAuth session保護的 `GET /settings`。頁面以三個直式區塊管理台灣本月預算、分類及付款方式；所有寫入只接受URL-encoded表單，使用既有CSRF驗證及POST／Redirect／GET，身分一律取自session，外部 `user_id` 或月份欄位不影響操作對象。
+- 本月總預算與各分類預算可分別設定、修改或清除；沒有總預算時可單獨設定分類預算，有總預算時不得低於全部分類預算合計。新增「設為分類預算加總」，沒有分類預算時不顯示操作。預算讀取、驗證及寫入在同一交易中完成；清除總預算會保留分類預算。
+- 分類支援新增、改名及停用。改名在單一交易中同步本人所有帳目（含已撤銷）、所有月份預算、固定／訂閱／分期規則、捷徑及 `expense_actions.before_json`，任一步失敗即完整rollback；內建分類以停用舊名並建立新名處理，`總額`仍不可作為分類。停用分類保留歷史及預算資料，並從快速記帳選項移除。
+- 付款方式支援新增、改名及停用；沿用「現金／未指定」不可改名或停用及既有歷史帳目名稱快照規則。Web路由只透過 `life_ledger_service.py` 的最小 façade 呼叫 `spending.py`，沒有直接SQL或import `db.py`、`spending.py`、`ledger.py`。
+- 沒有新增資料表、欄位、索引、migration、依賴、ORM、Repository、DI、JavaScript、JSON API或前端框架；沒有改動Discord既有操作流程，也未加入固定支出、捷徑、提醒或月份切換管理。
+
+### 驗證與未驗證事項
+
+- 依TDD先確認預算規則、分類原子改名、rollback、Service轉交、設定頁顯示、安全寫入及快速記帳選項測試為RED，再以最小修改轉為GREEN。focused tests實際結果：`tests.test_spending` 13項、`tests.test_spending_phase1` 7項、寫入可靠性9項、`tests.test_life_ledger_service` 15項、`tests.test_simple_dashboard` 6項、`tests.test_web_auth` 69項全部通過。
+- `python -m ruff check .` 與 `git diff --check` 通過；`python tests/run_discord_validation.py` 共262項隔離測試通過。測試只使用暫存SQLite、OAuth與Discord替身，未讀取或修改正式 `data.db`、Token、`.env`、備份、匯出檔或使用者資料，也未初始化正式資料庫。
+- 尚未驗證真實Discord OAuth、真實Discord介面、本機真實瀏覽器／手機設定頁互動、Web與Bot共同連線正式帳本或正式資料庫相容性。本輪未暫存、提交或推送Git。
+
+## 0.11.9 — 2026-09-27
+
+### 生活記帳 Service 邊界統一第一輪
+
+- `dashboard.py` 移除對 `spending.py` 的直接依賴；日期與月份、預算、捷徑、提醒、固定支出同步、新手導覽及月結都改由 `life_ledger_service.py` 的最小薄 façade 轉交。Discord Dashboard 與 Web 現在都透過同一個 Service 邊界進入生活帳務規則。
+- 新 façade 對所有使用者操作沿用 `_user()` 正規化 Discord 使用者ID，並原樣轉交參數、回傳值與例外；台灣今天及月份解析仍使用既有 `spending.py` 行為。Dashboard 的 ISO 日期解析與金額顯示分別改用標準庫 `date` 與 `Decimal`。
+- `spending.py` 仍唯一負責驗證、交易與SQLite操作。沒有拆分 Dashboard，沒有變更 Discord 指令、按鈕、表單、文字、資料結果、帳務規則、使用者流程、資料表、資料庫結構或依賴，也沒有新增 Repository、DI、ORM、API或設定。
+
+### 驗證與未驗證事項
+
+- 依TDD先新增 façade 轉交與 Dashboard 禁止直連 `spending.py` 的2項回歸測試，確認缺少 façade 與既有直接依賴時為RED，再以最小修改轉為GREEN。`python -m unittest tests.test_life_ledger_service -v` 共14項、`python -m unittest tests.test_simple_dashboard -v` 共6項、`python -m unittest tests.test_web_auth -v` 共57項通過。
+- `python -m ruff check .` 通過；`python tests/run_discord_validation.py` 共244項隔離測試通過；`rg -n "import spending|from spending|sp\." dashboard.py` 無輸出。測試使用暫存SQLite與傳送／OAuth替身，未讀取或修改正式 `data.db`、Token、備份、匯出檔、`.env` 或使用者資料。
+- 尚未驗證真實Discord Dashboard按鈕／表單互動、真實Discord OAuth與瀏覽器互動或正式資料庫。本輪未暫存、提交或推送Git。
+
+## 0.11.8 — 2026-09-25
+
+### localhost Web搜尋帳目
+
+- 登入後快速記帳首頁新增「搜尋帳目」入口，並新增受OAuth session保護的唯讀 `GET /search`。搜尋表單只提供消費項目關鍵字、原生開始日期與結束日期；空白初始頁不呼叫Service，也不顯示錯誤或空結果。
+- 至少需填關鍵字或開始日期；開始日期未填結束日期時以台灣今天為結束，關鍵字可單獨搜尋或搭配結束日期。日期只接受實際存在、非未來的嚴格 `YYYY-MM-DD`，並拒絕只有結束日期或開始晚於結束；無效條件保留表單內容，以固定安全訊息回應HTTP 400且不查詢。
+- route只從驗證後session取得Discord使用者ID並呼叫既有 `life_ledger_service.search_expenses()`；query中的 `user_id` 與未知欄位不影響身分或資料。結果只呈現日期、金額、消費項目、分類及付款方式，Jinja自動跳脫query與帳目文字；Service的 `TypeError`／`ValueError` 不顯示內部細節。
+- Web沒有直接import `db.py`、`spending.py`或`ledger.py`，沒有SQL、資料表、欄位、索引、遷移或依賴變更。本輪未新增排序、分頁、分類／付款方式篩選、編輯、撤銷、刪除、匯出、JSON API、React或App。
+
+### 驗證與未驗證事項
+
+- 依TDD先建立搜尋與首頁入口測試，確認 `/search` 尚不存在與入口缺少時為RED，再完成最小實作。`python -m unittest tests.test_web_auth -v` 共57項通過，其中新增9項搜尋相關測試，涵蓋登入保護、空白頁不查詢、四種合法條件、五類無效條件、本人／他人隔離、voided與非consumption排除、外部 `user_id` 無效、HTML跳脫、空狀態及固定安全錯誤。
+- `python -m ruff check .` 通過；`python tests/run_discord_validation.py` 共242項隔離測試通過。測試只使用OAuth替身與暫存SQLite，未讀取或修改正式 `data.db`、Token、備份、匯出檔或使用者資料。
+- 尚未驗證真實Discord OAuth、實際瀏覽器搜尋與手機版互動、正式資料庫或外網部署。本輪未提交、未暫存或推送Git。
+
+## 0.11.7 — 2026-09-24
+
+### Web 本機啟動
+
+- 新增本機私有 `start_web.local.cmd`，可由使用者雙擊啟動 localhost 網站。它以 `%~dp0` 取得 worktree 根目錄，再以兩層父資料夾推導主專案根目錄，將 `DISCORDBOT_DB_PATH` 設為該根目錄下的 `data.db`。
+- 啟動前只檢查主專案資料庫檔及 worktree 的 `.venv\Scripts\python.exe` 是否存在；缺少時顯示路徑與錯誤後停止，不建立空白資料庫。檢查成功後顯示資料庫路徑與 `http://127.0.0.1:8000`，並以該 Python 執行既有 Uvicorn localhost 指令；命令視窗保留日誌，可用 `Ctrl + C` 停止。
+- `start_web.local.cmd` 不執行 `db.init_db()`，不備份、刪除、複製或移動資料庫檔案，也不啟動 Bot；Web 與 Bot 可分別啟動。`.gitignore` 新增 `/start_web.local.cmd`，此私有檔案不會上傳 GitHub。
+- 沒有修改 Bot、Web route、資料庫結構、Services、OAuth、月曆、快速記帳、Token、備份、匯出、相依套件或既有帳目內容。
+
+### 驗證與未驗證事項
+
+- `git check-ignore -v start_web.local.cmd` 確認由 `.gitignore` 的 `/start_web.local.cmd` 規則忽略；`git diff --check` 通過。
+- `& '.venv\Scripts\python.exe' -m ruff check .` 通過；`& '.venv\Scripts\python.exe' tests\run_discord_validation.py` 共233項隔離測試通過。未讀取、修改或初始化正式 `data.db`，未讀取 Token、OAuth secret、備份、匯出檔或使用者資料。
+- 為避免自動檢查正式資料庫，未實際執行啟動檔；`start_web.local.cmd` 仍待使用者雙擊驗證資料庫路徑、Uvicorn 日誌與 `Ctrl + C` 停止行為。本輪未暫存、提交或推送Git。
+
+## 0.11.6 — 2026-09-24
+
+### Web 快速記帳表單文字
+
+- 登入後首頁快速記帳表單將 `note` 欄位的 label 由「用途」改為「消費項目」，並在同一個 input 加入 `例如：午餐、全聯、Netflix` placeholder。
+- `note` 欄位名稱、`required`、`maxlength`、資料庫欄位、Services 呼叫、Discord Bot 與快速記帳資料語意均未變更；沒有讀取、修改或建立任何既有帳目。
+- 沒有新增依賴、資料表、欄位、索引、遷移、設定、別名或可自訂欄位名稱；搜尋、預算、設定、首頁看板、App與其他功能均未納入本次修改。
+
+### 驗證與未驗證事項
+
+- 依TDD先加入登入後首頁應顯示「消費項目」與指定 placeholder、且不顯示舊 label 的測試，確認模板尚未更新時失敗，再以最小模板調整使其通過。既有刷新頁面測試原本以「午餐」確認不回填已儲存內容，因新placeholder採用同一示例而觸發；已改用唯一測試值，持續驗證不回填已儲存的 `note`。
+- `& '.venv\Scripts\python.exe' -m ruff check .` 通過；`& '.venv\Scripts\python.exe' -m unittest tests.test_web_auth -v` 共48項通過；`& '.venv\Scripts\python.exe' tests\run_discord_validation.py` 共233項隔離測試通過。Web測試使用暫存SQLite與OAuth替身，未讀取或操作正式 `data.db`、Token、備份、匯出檔或使用者資料。
+- 未驗證真實Discord OAuth、實際瀏覽器登入／快速記帳、手機實機互動、正式資料庫或外網部署。本輪未提交、未暫存或推送Git。
+
+## 0.11.5 — 2026-09-24
+
+### Web與Discord Bot共用SQLite帳本路徑
+
+- `db.py`新增可單獨測試的 `configured_db_path(environment=None)`：`DISCORDBOT_DB_PATH` 有非空白值時只接受絕對路徑並直接作為 `DB_NAME`；未設定或只有空白時，完整保留 `Path(__file__).with_name("data.db")` 的既有預設。相對路徑以固定 `ValueError` 拒絕，不回顯路徑內容。
+- helper預設只讀目前程序環境，不讀 `.env`、不建立、複製、移動、刪除或覆寫資料庫。既有 `get_conn()`、`init_db()`、`schema.py`、`DB_NAME` 呼叫方式與測試 `patch.object(...)` 維持不變；Web啟動不會自動執行schema初始化。
+- README新增worktree Web與主專案Bot共用同一帳本的安全操作順序：在同一PowerShell設定環境變數、先自行備份、手動執行一次既有 `db.init_db()`，再以 `127.0.0.1` 啟動Web。沒有新增資料表、欄位、索引、遷移、依賴、Web API或帳務功能。
+
+### 驗證與未驗證事項
+
+- 依TDD先確認4項新測試因helper不存在而失敗，再完成最小實作。`python -m unittest tests.test_schema_initialization -v` 共8項通過；新增測試涵蓋預設、空白、合法絕對路徑且不建立檔案，以及相對路徑固定安全拒絕，既有schema初始化、重複執行、舊結構相容與錯誤rollback測試仍通過。
+- `python -m unittest tests.test_web_auth -v` 共47項通過；`python tests/run_discord_validation.py` 共232項隔離測試通過。測試只使用環境dict與暫存SQLite，未讀取或修改Token、正式 `data.db`、備份、匯出檔或使用者資料。
+- 未對使用者正式資料庫執行 `db.init_db()`，也未驗證真實Discord OAuth、真實瀏覽器、Web與Bot共同連線正式帳本或正式資料庫相容處理。本輪未提交、未暫存或推送Git。
+
+## 0.11.4 — 2026-09-24
+
+### localhost Web v1 第二階段 B：完整月曆
+
+- 登入後快速記帳首頁新增「查看月曆」入口，並新增受Discord OAuth session保護的 `GET /calendar`；預設台灣本月，只接受嚴格 `YYYY-MM` 與同月、非未來的 `YYYY-MM-DD`，不合法輸入以固定安全訊息回應HTTP 400。
+- 完成Monday-first七欄CSS grid月曆、`Mon`至`Sun`星期標題、上個月／回到本月／下個月導覽及手機窄螢幕樣式。本月不產生未來月份連結；日期格只顯示日期與「當日有記錄」記號，不顯示金額、分類、用途、付款方式或深淺等級。
+- 選取日期後於同頁下方顯示當日合計及安全明細欄位。記號、合計與明細共同使用 `life_ledger_service.get_calendar_days()` 及 `list_expenses()` 的本人、有效、未撤銷 `consumption` 範圍，包含手動及既有固定、訂閱、分期的已入帳消費，排除他人與已撤銷帳目。
+- Web仍只從驗證後session取得Discord使用者身分，不接受query的 `user_id`；路由不import `db.py`、`spending.py`或`ledger.py`，不寫SQL。本版沒有資料表、欄位、索引、遷移或依賴變更，也未新增搜尋、預算、設定、API、React或App。
+
+### 驗證與未驗證事項
+
+- 依TDD逐項先確認失敗再完成最小實作。`python -m unittest tests.test_web_auth -v` 共47項通過，其中本版新增11項首頁入口與月曆測試，涵蓋未登入不查Services、本人／他人隔離、撤銷排除、嚴格日期、未來限制、28／29／30／31天、Monday-first對齊、無金額記號、月份導覽、空月／空日、安全錯誤，以及同日手動／固定／訂閱／分期的明細與合計。
+- `python -m ruff check .` 通過；`python tests/run_discord_validation.py` 共228項隔離測試通過。測試使用OAuth替身與暫存SQLite，未讀取Token、正式 `data.db`、真實備份、匯出檔或使用者資料，也未啟動正式Bot或連線Discord。
+- 真實Discord OAuth、本機真實瀏覽器登入／快速記帳／月曆互動、手機版實機呈現及正式資料庫仍未驗證。本輪未提交、未暫存或推送Git。
+
+## 0.11.3 — 2026-09-24
+
+### localhost Web v1 第二階段 A：快速記帳
+
+- 將登入後首頁placeholder改為最小快速記帳表單，提供必填金額、用途、本人啟用分類、本人啟用付款方式與台灣日期。分類優先預選「其他」，停用時回退第一個啟用分類；付款方式只在最近一筆有效手動消費的來源仍屬本人且啟用時預選，否則回退本人既有「未指定」。
+- 新增 `POST /expenses`，只解析URL-encoded表單並要求CSRF、金額、用途、分類、付款方式與日期各恰好一個值。使用者身分只取自驗證後session，忽略query與表單中的 `user_id`；跨使用者付款方式與所有無效欄位均拒絕且不寫入。
+- Web路由只呼叫 `life_ledger_service.py` 既有的分類、付款方式、最近消費與新增消費介面，不直接import `spending.py`、`db.py`或`ledger.py`，沒有SQL、資料表、欄位、索引、遷移、依賴或Discord Bot流程變更。
+- 新增成功採用 `303 → /?saved=1` 的POST／Redirect／GET流程，只顯示「已儲存消費」安全提示；驗證失敗以固定訊息與HTTP 400重繪，保留五個表單欄位。失效分類或付款方式僅顯示已跳脫的「原選擇無法使用」，不洩漏、建立或重新啟用其他資料。
+- 本階段未新增搜尋、月曆、預算、設定、分類／付款方式管理、固定支出、投資、AI、匯出、備份、JSON API、React或App。
+
+### 驗證與未驗證事項
+
+- 先建立失敗測試再實作；`python -m unittest tests.test_web_auth -v` 共36項通過，其中新增15項快速記帳測試。測試涵蓋未登入隱藏、本人選項、分類與日期預設、最近付款方式安全回退、本人consumption寫入、外部 `user_id` 無效、跨使用者拒絕、CSRF、無效draft、PRG及Web模組邊界。
+- `python tests/run_discord_validation.py` 共217項隔離測試通過；快速記帳與原OAuth session測試均使用獨立暫存SQLite與OAuth替身。未讀取Token、正式 `data.db`、真實備份、匯出檔或使用者資料，也未啟動正式Bot或連線Discord。
+- 真實Discord OAuth、本機瀏覽器完整登入／快速記帳及正式資料庫仍未驗證。本輪未提交、未暫存或推送Git。
+
+## 0.11.2 — 2026-09-23
+
+### localhost Web v1 第一階段
+
+- 新增 `web/` FastAPI app factory、Jinja2最小頁面與CSS，提供公開 `GET /healthz`、Discord OAuth `GET /login`／callback、受登入保護的 `GET /` placeholder，以及具CSRF驗證的 `POST /logout`。首頁尚不能記帳、搜尋、查看月曆或管理設定。
+- Discord OAuth使用Authlib authorization-code flow且scope僅為 `identify`；Discord使用者資料請求使用API v10。OAuth state由Authlib暫存在signed session並於callback成功或失敗後清除。登入完成後session只保留Discord user ID與CSRF token，不保存access token、refresh token、email或profile，也不接受網址或表單指定 `user_id`／`next`。
+- SessionMiddleware Cookie有效期固定604800秒，使用 `HttpOnly`、`SameSite=Lax`；localhost HTTP不設定 `Secure`。Web設定只讀專案根目錄 `.env`，拒絕缺失、過短或範例session secret，以及非本機HTTP callback URI。
+- `requirements.txt`新增FastAPI 0.141.1、Uvicorn 0.53.0、Jinja2 3.1.6、Authlib 1.8.0、itsdangerous 2.2.0與python-dotenv 1.2.3；`requirements-dev.txt`新增httpx 0.28.1。`.env.example`只加入空白Web設定名稱與本機callback範例，未加入真實憑證。
+- 本階段的Web模組不import或呼叫 `db.py`、`spending.py`、`life_ledger_service.py`或Bot `config.py`，不初始化SQLite，沒有資料庫結構或使用者資料流程變更。
+
+### 啟動與驗證
+
+- 升級不需資料庫遷移或啟動正式Bot。自行建立不提交的根目錄 `.env` 並在Discord Developer Portal登錄完全相同的 `http://127.0.0.1:8000/auth/discord/callback` 後，以 `python -m uvicorn web.app:create_app --factory --host 127.0.0.1 --port 8000` 啟動。
+- 使用隔離Python 3.12.14執行 `python -m ruff check .` 通過；`python tests/run_discord_validation.py` 共202項隔離測試通過，其中新增21項Web設定、登入、OAuth state、API v10設定、安全錯誤、Cookie、CSRF及未公開OpenAPI入口測試；獨立 `python -m unittest tests.test_web_auth -v` 21項通過。
+- 未讀取Token、正式 `data.db`、真實備份、匯出檔或使用者資料，未啟動正式Bot、未連線真實Discord。真實Discord OAuth、本機瀏覽器互動、正式資料庫與未來Web帳務整合尚未實測；本輪未提交或推送Git。
+
 ## 0.11.1 — 2026-09-21
 
 ### Web 前基線整合與可重現驗證

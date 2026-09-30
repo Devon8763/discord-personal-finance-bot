@@ -1,11 +1,14 @@
 """Private, paged Discord spending dashboard."""
-import discord
 import calendar
+from datetime import date
+from decimal import Decimal
+from importlib import import_module
+
+import discord
 import life_ledger_service as life_service
 from selection_ui import OwnedView, Picker, PaymentPicker
 from form_ui import InlineForm
-import spending as sp
-from presentation import number, NOTE
+from presentation import number, NOTE, discord_spending_error
 from privacy_rules import private_interaction
 
 TABS = ('今天','帳目','更多')
@@ -18,22 +21,22 @@ def progress(percent):
 
 def card(user_id,month,tab,page=0):
     if tab=='帳目': return calendar_embed(user_id,month),0,1
-    if tab=='今天': month=sp.today().strftime('%Y-%m')
+    if tab=='今天': month=life_service.get_today().strftime('%Y-%m')
     report = life_service.get_month_summary(user_id,month)
     total = next((b for b in report['budgets'] if b['category']=='總額'),None)
     ratio = total['used_percent'] if total else 0
-    color = 0xe74c3c if ratio>=100 else 0xf1c40f if ratio>=80 else 0x2ecc71
+    color = 0xe74c3c if ratio is not None and ratio>=100 else 0xf1c40f if ratio is not None and ratio>=80 else 0x2ecc71
     embed = discord.Embed(title=f'💰 {month} · {tab}',color=color)
     pages = 1
     if tab=='今天':
         embed.add_field(name='本月已支出',value=f"**{number(report['total'])} 元**",inline=True)
         embed.add_field(name='剩餘總預算',value=f"**{number(total['remaining'])} 元**" if total else '尚未設定',inline=True)
-        names=[discord.utils.escape_markdown(r['name']) for r in sp.shortcuts(user_id)[:3]]
+        names=[discord.utils.escape_markdown(r['name']) for r in life_service.get_shortcuts(user_id)[:3]]
         embed.add_field(name='常用捷徑',value='、'.join(names) if names else '尚無捷徑，按「＋建立捷徑」開始。',inline=False)
     elif tab=='更多':
         embed.description='需要調整資料請選「設定」；想看花費狀況請選「洞察」。'
         embed.add_field(name='設定',value='預算 · 固定負擔 · 付款來源 · 分類 · 提醒 · 重新開啟新手導覽 · 我的資料與隱私',inline=False)
-        embed.add_field(name='洞察',value='支出圖表 · 本週回顧 · 本月回顧 · 生活 AI · 本月結帳',inline=False)
+        embed.add_field(name='洞察',value='支出圖表 · 本週回顧 · 本月回顧 · 本月結帳',inline=False)
         embed.add_field(name='常用捷徑管理',value='新增、修改、排序與停用；使用捷徑仍須確認表單。',inline=False)
     elif tab=='清單':
         requested_page = max(0,page)
@@ -53,17 +56,19 @@ def card(user_id,month,tab,page=0):
         pages = max(1,(len(budgets)+4)//5)
         page = min(max(0,page),pages-1)
         for b in budgets[page*5:page*5+5]:
-            embed.add_field(name=f"{b['category']} · 使用率 {number(b['used_percent'])}%",value=f"{progress(b['used_percent'])}\n{number(b['spent'])}／{number(b['budget'])} 元\n"+('超支 ' if b['remaining']<0 else '剩餘 ')+f"{number(abs(b['remaining']))} 元",inline=False)
+            usage = f"使用率 {number(b['used_percent'])}%" if b['used_percent'] is not None else '使用率不適用（零元預算）'
+            bar = f"{progress(b['used_percent'])}\n" if b['used_percent'] is not None else ''
+            embed.add_field(name=f"{b['category']} · {usage}",value=bar+f"{number(b['spent'])}／{number(b['budget'])} 元\n"+('超支 ' if b['remaining']<0 else '剩餘 ')+f"{number(abs(b['remaining']))} 元",inline=False)
         if not budgets:
             embed.description='尚未設定預算。先設定「總額」，再設定各分類。'
-        embed.add_field(name='提醒門檻',value='／'.join(f'{v}%' for v in sp.reminder_levels(user_id)),inline=False)
+        embed.add_field(name='提醒門檻',value='／'.join(f'{v}%' for v in life_service.get_reminder_levels(user_id)),inline=False)
     elif tab=='固定負擔':
         rules=life_service.get_recurring_expenses(user_id)
         pages=max(1,(len(rules)+4)//5)
         page=min(max(0,page),pages-1)
         embed.description=f"本月已列入 **{number(report['fixed'])} 元**"
         for r in rules[page*5:page*5+5]:
-            start=sp.month_date(r['start_month']); selected=sp.month_date(month)
+            start=life_service.parse_month(r['start_month']); selected=life_service.parse_month(month)
             elapsed=max(0,(selected.year-start.year)*12+selected.month-start.month+1)
             status='停用' if not r['active'] else '尚未開始' if elapsed==0 else '已結束' if r['periods'] and elapsed>r['periods'] else '啟用'
             detail=f"`#{r['id']}` · {r['category']} · {status}\n開始月份 {r['start_month']}"
@@ -72,30 +77,25 @@ def card(user_id,month,tab,page=0):
             embed.add_field(name=f"{r['name']} · {number(r['cents']/100)} 元／月",value=detail,inline=False)
         if not rules:
             embed.description='尚無固定項目。點「＋新增固定負擔」，選擇訂閱、固定支出或分期。'
-    else:
-        embed.description='**用短重點理解你的支出。**\n\n📅 月分析：近 3 月同天數比較\n📆 週分析：近 4 週同天數比較\n💬 問問題：例如「上個月餐飲花多少？」'
-        embed.add_field(name='查詢範圍',value='分析以今天為基準；不會自動修改帳目或預算。',inline=False)
     embed.set_footer(text=f'第 {page+1}／{pages} 頁 · '+NOTE+' · 僅本人可見')
     return embed,page,pages
 
 
 class EntryModal(InlineForm):
     def __init__(self,view,kind,selections=None,draft=None):
-        super().__init__(view.owner,title={'expense':'記錄支出','budget':'設定預算','month':'切換月份','ask':'自然語言查詢'}[kind],draft=draft)
+        super().__init__(view.owner,title={'expense':'記錄支出','budget':'設定預算','month':'切換月份'}[kind],draft=draft)
         self.view,self.kind=view,kind
         selected=selections or {}
         self.saved=False
         self.reopen=lambda draft:EntryModal(view,kind,draft=draft)
-        if kind=='ask':
-            self.text('question','你想查詢什麼？')
-        elif kind=='month':
+        if kind=='month':
             self.month(view.month)
         elif kind=='budget':
             self.month(selected.get('month',view.month),future=True)
             self.category(selected.get('category','總額'),budget=True)
             self.text('amount','預算金額（元）',limit=30)
         else:
-            self.text('date','日期（YYYY-MM-DD）',selected.get('date',sp.today().isoformat()),limit=10)
+            self.text('date','日期（YYYY-MM-DD）',selected.get('date',life_service.get_today().isoformat()),limit=10)
             self.text('amount','支出金額（元）',limit=30)
             if 'category' in selected: self.category(selected['category'])
             else: self.category()
@@ -118,16 +118,13 @@ class EntryModal(InlineForm):
             if self.saved:
                 await ctx.send('此表單已儲存，請開啟新表單記錄下一筆。')
                 return
-            if self.kind=='ask':
-                await self.view.cog.ask.callback(self.view.cog,ctx,question=values['question'])
-                return
             if self.kind=='month':
                 life_service.get_month_summary(str(self.view.owner),values['month'])
                 self.view.month=values['month']
                 self.view.page=0
                 await ctx.send('已切換月份。')
             elif self.kind=='budget':
-                sp.set_budget(str(self.view.owner),values['month'],values['category'],values['amount'])
+                life_service.set_budget(str(self.view.owner),values['month'],values['category'],values['amount'])
                 await ctx.send('✅ 預算已儲存。')
             else:
                 key=life_service.add_expense(str(self.view.owner),values['amount'],values['category'],values['note'],values['date'],values['payment'])
@@ -136,14 +133,14 @@ class EntryModal(InlineForm):
             await self.view.cog.notify(ctx)
             await self.view.refresh()
         except ValueError as error:
-            await ctx.send(str(error))
+            await ctx.send(discord_spending_error(error))
 
 
 class Dashboard(discord.ui.View):
     def __init__(self,cog,owner,month=None):
         super().__init__(timeout=300)
         self.cog,self.owner=cog,owner
-        self.month=month or sp.today().strftime('%Y-%m')
+        self.month=month or life_service.get_today().strftime('%Y-%m')
         self.tab='今天'; self.page=0; self.message=None
         self.calendar_half='first'
         self.render()
@@ -176,7 +173,7 @@ class Dashboard(discord.ui.View):
             async def expense(i): await start_entry(self,i,'expense')
             self.button('＋記一筆消費',expense,style=discord.ButtonStyle.success)
             from lifestyle_ui import open_shortcut,open_shortcuts
-            shortcuts=sp.shortcuts(str(self.owner))[:3]
+            shortcuts=life_service.get_shortcuts(str(self.owner))[:3]
             for shortcut in shortcuts:
                 async def quick(i,key=shortcut['id']): await open_shortcut(self,i,key)
                 self.button(shortcut['name'],quick,row=2)
@@ -201,17 +198,9 @@ class Dashboard(discord.ui.View):
             self.button('設定預算',budget)
         elif self.tab=='固定負擔':
             async def recurring(i):
-                from spending_commands import RecurringModal
+                RecurringModal = import_module("spending_commands").RecurringModal
                 await i.response.send_modal(RecurringModal(self.cog,owner=self.owner))
             self.button('＋新增固定負擔',recurring,style=discord.ButtonStyle.success)
-        elif self.tab=='AI':
-            for label,unit,count in (('月分析','月',3),('週分析','週',4)):
-                async def analyze(i,u=unit,n=count):
-                    await i.response.defer(ephemeral=True,thinking=True)
-                    await self.cog.analyze_spending(self.cog.interaction_context(i),u,n)
-                self.button(label,analyze,style=discord.ButtonStyle.success)
-            async def ask(i): await i.response.send_modal(EntryModal(self,'ask'))
-            self.button('問問題',ask)
         async def select_month(i):
             from selection_ui import choose_month
             async def selected(event,month):
@@ -230,7 +219,7 @@ class Dashboard(discord.ui.View):
             self.button('提醒設定',reminders,row=1)
         async def refresh(i):
             await i.response.defer()
-            sp.sync_recurring(str(self.owner))
+            life_service.sync_recurring(str(self.owner))
             await self.refresh(i)
         if self.tab not in ('今天','更多'): self.button('重新整理',refresh,row=4)
         if self.tab in ('預算','固定負擔'):
@@ -266,7 +255,7 @@ async def open_dashboard(cog,interaction):
     ctx=cog.interaction_context(interaction)
     await cog.prepare(ctx)
     view=Dashboard(cog,interaction.user.id)
-    if sp.onboarding_needed(str(view.owner)):
+    if life_service.get_onboarding_needed(str(view.owner)):
         guide=Onboarding(view.cog,view.owner)
         guide.message=await interaction.followup.send(embed=guide.render(),view=guide,ephemeral=True,wait=True)
     view.message=await interaction.followup.send(embed=view.render(),view=view,ephemeral=True,wait=True)
@@ -276,14 +265,14 @@ async def open_dashboard_tools(dashboard,i,group):
     if not await dashboard.interaction_check(i):return
     options={'帳目工具':('搜尋帳目','清單檢視','最近再記'),
              '設定':('預算','固定負擔','付款來源','分類','提醒','重新開啟新手導覽','我的資料與隱私'),
-             '洞察':('支出圖表','本週回顧','本月回顧','生活 AI','本月結帳')}[group]
+             '洞察':('支出圖表','本週回顧','本月回顧','本月結帳')}[group]
     title=group+'：'+'、'.join(options)
     async def selected(event,option):
         if not await dashboard.interaction_check(event):return
         if option not in options:return
-        if option in ('預算','固定負擔','生活 AI'):
+        if option in ('預算','固定負擔'):
             await event.response.defer()
-            dashboard.tab,dashboard.page=('AI' if option=='生活 AI' else option),0
+            dashboard.tab,dashboard.page=option,0
             dashboard.message=getattr(event,'message',dashboard.message)
             await dashboard.refresh(event)
         elif option=='我的資料與隱私':
@@ -325,19 +314,19 @@ async def open_dashboard_tools(dashboard,i,group):
         await event.response.edit_message(content=None,embed=dashboard.render(),view=dashboard)
     back.callback=return_dashboard
     picker.extra_buttons.append(back);picker.build()
-    await i.response.send_message(title+'\n選擇功能會開啟私人表單或訊息；完成後可回到此選單按「返回主看板」。預算、固定負擔與生活 AI 頁可按「更多」返回。',view=picker,ephemeral=True)
+    await i.response.send_message(title+'\n選擇功能會開啟私人表單或訊息；完成後可回到此選單按「返回主看板」。預算與固定負擔頁可按「更多」返回。',view=picker,ephemeral=True)
 
 
 class Onboarding(OwnedView):
     def __init__(self,cog,owner):
         super().__init__(owner)
-        self.cog,self.month,self.message=cog,sp.today().strftime('%Y-%m'),None
+        self.cog,self.month,self.message=cog,life_service.get_today().strftime('%Y-%m'),None
         for label in ('設定付款來源','建立常用捷徑','設定當月預算','先跳過','完成導覽'):
             button=discord.ui.Button(label=label,row=0 if label.startswith(('設定','建立')) else 1)
             async def click(i,action=label):
                 if not await self.interaction_check(i):return
                 if action in ('先跳過','完成導覽'):
-                    sp.dismiss_onboarding(str(self.owner))
+                    life_service.dismiss_onboarding(str(self.owner))
                     await i.response.edit_message(content='已關閉自動導覽。可直接使用生活看板；需要時從「更多 → 設定」重新開啟。',embed=None,view=None)
                 elif action=='設定當月預算':await i.response.send_modal(EntryModal(self,'budget'))
                 else:
@@ -368,7 +357,7 @@ class MonthlyClosing(OwnedView):
         self.month,self.page=month,0
 
     def render(self):
-        data=sp.monthly_closing(str(self.owner),self.month)
+        data=life_service.get_monthly_closing(str(self.owner),self.month)
         current,previous,comparison=data['current'],data['previous'],data['comparison']
         safe=discord.utils.escape_markdown
         money=lambda value:safe(number(value))+' 元'
@@ -406,7 +395,7 @@ class EditExpenseModal(InlineForm):
         super().__init__(view.owner,title=f"修改消費 #{expense['id']}",draft=draft)
         self.view,self.expense=view,expense
         self.reopen=lambda draft:EditExpenseModal(view,expense,draft=draft)
-        self.text('amount','金額（元）',str(sp.Decimal(expense['cents'])/100),limit=30)
+        self.text('amount','金額（元）',str(Decimal(expense['cents'])/100),limit=30)
         self.category(expense['category'],keep=True)
         self.text('note','用途',expense['note'])
         self.text('date','日期（YYYY-MM-DD；自動記帳不可移動）',expense['spent_on'],limit=10)
@@ -427,7 +416,7 @@ class EditExpenseModal(InlineForm):
             await self.view.cog.notify(self.view.cog.interaction_context(i))
             await self.view.refresh()
         except ValueError as error:
-            await i.followup.send(str(error), ephemeral=True)
+            await i.followup.send(discord_spending_error(error), ephemeral=True)
 
 
 class Accounts(Picker):
@@ -467,7 +456,7 @@ class SearchExpensesModal(InlineForm):
             view=SearchResults(self.dashboard,entries)
             await i.followup.send(**view.page_content(),view=view,ephemeral=True)
         except ValueError as error:
-            await i.followup.send(str(error),ephemeral=True)
+            await i.followup.send(discord_spending_error(error),ephemeral=True)
 
 
 class SearchResults(Accounts):
@@ -489,7 +478,7 @@ class SearchResults(Accounts):
                 raise ValueError('搜尋結果已變動，請重新搜尋。')
             await i.response.send_modal(EditExpenseModal(self.dashboard,entry))
         except ValueError as error:
-            await i.response.send_message(str(error),ephemeral=True)
+            await i.response.send_message(discord_spending_error(error),ephemeral=True)
 
 
 def calendar_cell(text):
@@ -503,7 +492,7 @@ def calendar_row(values):
 
 def calendar_embed(owner,month):
     days=life_service.get_calendar_days(str(owner),month)
-    start=sp.month_date(month)
+    start=life_service.parse_month(month)
     marks={int(r['date'][-2:]):r['level'] for r in days}
     weeks=calendar.Calendar().monthdayscalendar(start.year,start.month)
     grid=calendar_row(('Mon','Tue','Wed','Thu','Fri','Sat','Sun'))+'\n'+'\n'.join(
@@ -523,7 +512,7 @@ class CalendarAccounts(OwnedView):
         days=life_service.get_calendar_days(str(self.owner),self.month)
         selected=days[:15] if self.half=='first' else days[15:]
         select=discord.ui.Select(placeholder='選擇日期查看帳目',row=row+1,options=[
-            discord.SelectOption(label=f"{d['date']}（週{'一二三四五六日'[sp.date.fromisoformat(d['date']).weekday()]}）",value=d['date']) for d in selected])
+            discord.SelectOption(label=f"{d['date']}（週{'一二三四五六日'[date.fromisoformat(d['date']).weekday()]}）",value=d['date']) for d in selected])
         async def choose(i):
             if not await self.interaction_check(i):return
             on=select.values[0]
@@ -587,7 +576,7 @@ async def open_accounts(view, i, month=None,mode='calendar',on=None):
             entry = life_service.get_expense(str(view.owner), key)
             await event.response.send_modal(EditExpenseModal(view, entry))
         except ValueError as error:
-            await event.response.send_message(str(error), ephemeral=True)
+            await event.response.send_message(discord_spending_error(error), ephemeral=True)
     picker = Accounts(view.owner, month, entries, selected)
     picker.day=on
     button = discord.ui.Button(label='切換月份', row=2)

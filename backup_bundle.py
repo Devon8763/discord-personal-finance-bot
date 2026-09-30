@@ -68,7 +68,7 @@ settings包含分類(name/active)、付款方式(name/active)、捷徑(name/cate
 舊帳號自行匯出，新帳號私訊Bot上傳預覽後確認。同名設定或衝突保留目標帳號；目標已有預算即略過全部備份預算，過期月份不套用。同一投資標的已有持倉或歷史時整組略過，不混合持倉。
 CSV公式開頭加單引號，原始匯入內容以JSON為準。manifest僅驗證格式、版本與完整性，不證明來源真偽。
 無法登入舊帳號且無相容備份時無法找回。Bot不提供管理者代查看、代轉移或還原權限；主機管理者仍可能直接讀取資料庫。
-匯入後AI關閉，使用前需重新同意。這是使用者主動匯出檔，不供主機整體復原使用。
+目前沒有AI功能；舊AI偏好不搬移。這是使用者主動匯出檔，不供主機整體復原使用。
 ''').encode('utf-8-sig'),
     }
     from life_transfer import FIELDS
@@ -266,7 +266,6 @@ def merge_bundle(user,bundle,apply=False):
                 if name=='fund_transactions':fund_ids[index]=key
                 if name=='expenses' and not row['voided']:
                     conn.execute('INSERT INTO expense_actions(user_id,expense_id,before_json) VALUES(?,?,?)',(str(user),key,'null'))
-            conn.execute('DELETE FROM ai_preferences WHERE user_id=?',(str(user),))
     except Exception:
         raise BundleImportFailed(counts) from None
     return counts

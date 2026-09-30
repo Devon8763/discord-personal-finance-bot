@@ -157,18 +157,17 @@ class RoundTwoUI(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await picker.interaction_check(interaction(43)))
         await picker.chosen(i,picker.items[0][1])
         self.assertEqual(i.response.send_modal.await_args.args[0].fields['note'].value,'自己')
-        with patch('spending_commands.complete',AsyncMock(side_effect=AssertionError('不得呼叫AI'))):
-            await open_reviews(self.view,i)
-            self.assertTrue(i.followup.send.await_args.kwargs['ephemeral'])
-            view=i.followup.send.await_args.kwargs['view']
-            self.assertFalse(await view.interaction_check(interaction(43)))
-            await next(c for c in view.children if c.label=='本月回顧').callback(i)
-            embed=i.response.edit_message.await_args.kwargs['embed']
-            self.assertIn('10 元',embed.description)
-            self.assertIn('僅依已記錄資料統計',embed.footer.text)
-            self.assertNotIn('999',str(embed.to_dict()))
+        await open_reviews(self.view,i)
+        self.assertTrue(i.followup.send.await_args.kwargs['ephemeral'])
+        view=i.followup.send.await_args.kwargs['view']
+        self.assertFalse(await view.interaction_check(interaction(43)))
+        await next(c for c in view.children if c.label=='本月回顧').callback(i)
+        embed=i.response.edit_message.await_args.kwargs['embed']
+        self.assertIn('10 元',embed.description)
+        self.assertIn('僅依已記錄資料統計',embed.footer.text)
+        self.assertNotIn('999',str(embed.to_dict()))
 
-    async def test_slash_registration_sync_private_paths_and_investment_ai(self):
+    async def test_slash_registration_sync_private_paths_and_investment(self):
         fake=ModuleType('scraper');fake.get_price=lambda symbol:None
         with patch.dict(sys.modules,{'scraper':fake}):
             import bot as app
@@ -192,20 +191,16 @@ class RoundTwoUI(unittest.IsolatedAsyncioTestCase):
                 self.assertIsInstance(i.followup.send.await_args.kwargs['view'],Dashboard)
                 self.assertTrue(i.followup.send.await_args.kwargs['ephemeral'])
                 self.assertEqual({c.label for c in app.MainHelpView().children},{'💰 生活記帳','📈 投資紀錄'})
-                self.assertNotIn('🤖 AI 摘要',[c.label for c in app.HelpView().children])
                 from investment_ui import InvestmentPanel
-                panel=InvestmentPanel(app,42);panel.tab='AI';panel.render()
+                panel=InvestmentPanel(app,42)
+                self.assertEqual([c.label for c in panel.children if c.row==0],['股票','基金','觀察','歷史'])
                 self.assertFalse(await panel.interaction_check(interaction(43)))
-                with patch.object(app,'build_analysis',AsyncMock()) as build:
-                    await next(c for c in panel.children if c.label=='AI 投資摘要').callback(i)
-                    self.assertEqual(build.await_args.args[0].author.id,42)
-                    self.assertTrue(i.response.defer.await_args.kwargs['ephemeral'])
                 await cog.cog_app_command_error(i,RuntimeError('private-secret'))
                 self.assertNotIn('private-secret',str(i.response.send_message.await_args))
             finally:
                 await client.remove_cog('Spending')
 
-    async def test_sync_failure_log_is_safe_and_text_commands_survive(self):
+    async def test_sync_failure_log_is_safe_and_non_ai_commands_survive(self):
         fake=ModuleType('scraper');fake.get_price=lambda symbol:None
         with patch.dict(sys.modules,{'scraper':fake}):
             import bot as app
@@ -216,7 +211,11 @@ class RoundTwoUI(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('private-secret',text)
                 self.assertIn('!help',text)
             self.assertIsNotNone(client.get_command('支出'))
-            self.assertIsNotNone(client.get_command('analyze'))
+            self.assertIsNotNone(client.get_command('portfolio'))
+            for module in ('ai', 'ai_consent', 'query_plan'):
+                self.assertNotIn(module, sys.modules)
+            for name in ('分析', 'analyze', '問', 'ask', '分類建議', '記帳分析'):
+                self.assertIsNone(client.get_command(name))
             await client.remove_cog('Spending')
 
     async def test_disabled_shortcut_source_and_category_revalidated_at_save(self):

@@ -97,6 +97,7 @@ class BundleTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):validate_bundle(bundle)
         del bundle['categories'][0]['user_id']
         with sp.transaction() as conn:
+            conn.execute('CREATE TABLE ai_preferences(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL)')
             conn.execute("INSERT INTO ai_preferences(user_id,enabled) VALUES('43',1)")
             conn.execute("CREATE TRIGGER bundle_fail BEFORE INSERT ON expenses BEGIN SELECT RAISE(ABORT,'SECRET'); END")
         with self.assertRaises(BundleImportFailed) as error:merge_bundle('43',bundle,True)
@@ -106,12 +107,12 @@ class BundleTests(unittest.IsolatedAsyncioTestCase):
         for table in ('spending_categories','payment_sources','budgets','spending_shortcuts','expenses'):
             self.assertEqual(sp.rows(f'SELECT * FROM {table} WHERE user_id=?',('43',)),[])
 
-    async def test_ai_never_exported_cancel_preserves_confirm_resets(self):
+    async def test_legacy_ai_preferences_are_not_exported_or_changed_by_import(self):
         from backup_bundle import export_bundle,read_bundle
         from life_transfer import ImportPreview
-        from ai_consent import enabled
         self.seed('43')
         with sp.transaction() as conn:
+            conn.execute('CREATE TABLE ai_preferences(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL)')
             conn.executemany('INSERT INTO ai_preferences(user_id,enabled) VALUES(?,1)',[('42',),('43',)])
         payload=export_bundle('43')
         with zipfile.ZipFile(io.BytesIO(payload)) as z:
@@ -121,11 +122,11 @@ class BundleTests(unittest.IsolatedAsyncioTestCase):
         bundle=read_bundle(payload)
         view=ImportPreview(self.view,bundle)
         await view.children[1].callback(interaction())
-        self.assertTrue(enabled('42'))
+        self.assertEqual(sp.rows('SELECT user_id,enabled FROM ai_preferences ORDER BY user_id'),[{'user_id':'42','enabled':1},{'user_id':'43','enabled':1}])
         view=ImportPreview(self.view,bundle);event=interaction()
         await view.children[0].callback(event)
-        self.assertFalse(enabled('42'));self.assertTrue(enabled('43'))
-        self.assertIn('AI 已關閉',event.edit_original_response.await_args.kwargs['content'])
+        self.assertEqual(sp.rows('SELECT user_id,enabled FROM ai_preferences ORDER BY user_id'),[{'user_id':'42','enabled':1},{'user_id':'43','enabled':1}])
+        self.assertIn('匯入完成',event.edit_original_response.await_args.kwargs['content'])
 
     async def test_investment_existing_symbol_conflict_keeps_target(self):
         from backup_bundle import export_bundle,read_bundle,merge_bundle

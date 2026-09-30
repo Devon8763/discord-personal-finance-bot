@@ -155,7 +155,7 @@ class ImportPreview(OwnedView):
                 except Exception:
                     await i.edit_original_response(content='新增 0 筆；匯入失敗，整批回滾，未保留新增或設定變更。略過／失敗筆數尚未完成核算，請重新預覽。',embed=None,view=None);return
                 if isinstance(records,dict):
-                    await i.edit_original_response(content='匯入完成；AI 已關閉，使用前需重新同意。\n'+bundle_counts(result),embed=None,view=None)
+                    await i.edit_original_response(content='匯入完成。\n'+bundle_counts(result),embed=None,view=None)
                 else:await i.edit_original_response(content=f"新增 {result['added']} 筆、略過 {result['skipped']} 筆、失敗 0 筆。",embed=None,view=None)
                 try:await self.dashboard.refresh()
                 except Exception:await i.followup.send('匯入已完成；請重新開啟生活看板查看。',ephemeral=True)
@@ -165,7 +165,7 @@ class ImportPreview(OwnedView):
         if isinstance(self.records,dict):
             from backup_bundle import merge_bundle
             result=merge_bundle(str(self.owner),self.records,False)
-            return discord.Embed(title='匯入我的備份 · 私人預覽',description=bundle_counts(result,True)+'\n\n同名或衝突設定保留目前帳號；已有預算時略過備份預算，同一投資標的已有資料時整組略過。確認時重新去重。\n匯入後 AI 關閉；不搬移舊 Discord ID 或 AI 資料。格式與完整性檢查不保證來源真偽，請只使用自己的備份。')
+            return discord.Embed(title='匯入我的備份 · 私人預覽',description=bundle_counts(result,True)+'\n\n同名或衝突設定保留目前帳號；已有預算時略過備份預算，同一投資標的已有資料時整組略過。確認時重新去重。\n不搬移舊 Discord ID 或舊 AI 設定。格式與完整性檢查不保證來源真偽，請只使用自己的備份。')
         result=preview_records(str(self.owner),self.records)
         return discord.Embed(title='匯入我的備份 · 私人預覽',description=f"可匯入帳目：{result['total']} 筆\n重複略過：{result['skipped']} 筆\n預計新增：{result['added']} 筆\n\n目標為目前操作的 Discord 帳號。只搬移消費帳目（含撤銷狀態），不搬移其他設定。確認時會重新檢查重複；備份中內容完全相同的帳目也會合併。\n只檢查格式、版本與完整性，不保證來源真偽；請確認這是你自己的備份。")
 

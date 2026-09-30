@@ -29,7 +29,7 @@ class DashboardToolsTests(unittest.IsolatedAsyncioTestCase):
     async def test_menus_explicit_complete_private_and_return(self):
         for group,options in (('帳目工具',['搜尋帳目','清單檢視','最近再記']),
                               ('設定',['預算','固定負擔','付款來源','分類','提醒','重新開啟新手導覽','我的資料與隱私']),
-                              ('洞察',['支出圖表','本週回顧','本月回顧','生活 AI','本月結帳'])):
+                              ('洞察',['支出圖表','本週回顧','本月回顧','本月結帳'])):
             menu,i=await self.menu(group)
             title=group+'：'+'、'.join(options)
             self.assertIn(title,i.response.send_message.await_args.args[0])
@@ -49,12 +49,12 @@ class DashboardToolsTests(unittest.IsolatedAsyncioTestCase):
         self.cog.detail_embed=lambda:discord.Embed(title='分類與指令說明')
         for group,option in (('帳目工具','搜尋帳目'),('帳目工具','清單檢視'),('帳目工具','最近再記'),
                              ('設定','預算'),('設定','固定負擔'),('設定','付款來源'),('設定','分類'),('設定','提醒'),
-                             ('洞察','支出圖表'),('洞察','本週回顧'),('洞察','本月回顧'),('洞察','生活 AI')):
+                             ('洞察','支出圖表'),('洞察','本週回顧'),('洞察','本月回顧')):
             menu,_=await self.menu(group);i=interaction()
             await choose(menu,option).callback(i)
             if option=='搜尋帳目':self.assertEqual(len(i.response.send_modal.await_args.args[0].fields),3)
-            elif option in ('預算','固定負擔','生活 AI'):
-                self.assertEqual(self.view.tab,'AI' if option=='生活 AI' else option)
+            elif option in ('預算','固定負擔'):
+                self.assertEqual(self.view.tab,option)
                 self.assertIn('更多',[b.label for b in self.view.children])
             else:
                 result=i.response.send_message.await_args or i.followup.send.await_args

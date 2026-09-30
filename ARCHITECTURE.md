@@ -8,7 +8,7 @@
 
 | 模組 | 目前責任 |
 | --- | --- |
-| `bot.py` | 啟動 Bot、註冊 Cog／View，串接既有記帳、投資、AI 與安全功能。 |
+| `bot.py` | 啟動 Bot、註冊 Cog／View，串接既有記帳、投資與安全功能。 |
 | `dashboard.py` | Discord 私人看板與消費、投資資訊呈現。 |
 | `lifestyle_ui.py` | 生活記帳的 Discord 表單、按鈕與互動流程。 |
 | `spending_commands.py` | 消費相關 Discord 指令與互動入口。 |
@@ -54,7 +54,6 @@ Discord UI／未來網站 UI
 - 核心資料規則不得 import `discord.py`。
 - 所有資料讀寫都必須以 `user_id` 隔離與驗證所有權。
 - 開發與測試只能使用隔離資料庫；不得把正式 `data.db`、Token、備份或匯出資料當作測試資料。
-- AI 僅讀取完成回應所需資料，不能自動新增或修改帳目。
 
 ## 後續整理順序
 

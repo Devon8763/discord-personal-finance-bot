@@ -1,0 +1,13 @@
+{
+  "version": "4.5.1",
+  "source": "https://github.com/chartjs/Chart.js/releases/download/v4.5.1/chart.js-4.5.1.tgz",
+  "package_sha256": "d74ffdc9e4760d8960de3fd92bfa03397f01f85497c887d580bcf72641766aad",
+  "bundled_color_version": "0.3.2",
+  "bundled_color_license_source": "https://raw.githubusercontent.com/kurkle/color/v0.3.2/LICENSE.md",
+  "sha256": {
+    "chart.umd.min.js": "48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a",
+    "chart.umd.min.js.map": "8c328df49d295935c81d64d3b36d6ac1c20c385f1ba5b4df3ec12a26b3d64d9b",
+    "LICENSE.md": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce",
+    "kurkle-color-LICENSE.md": "2859c50313bad2ba77b081410c477beaf92b60ca13a77a248d89859a6dd6ac81"
+  }
+}

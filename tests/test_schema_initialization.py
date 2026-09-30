@@ -8,6 +8,47 @@ from unittest.mock import patch
 import db
 
 
+class DatabasePathConfigurationTests(unittest.TestCase):
+    def test_missing_setting_uses_database_next_to_db_module(self):
+        self.assertEqual(
+            db.configured_db_path({}),
+            str(Path(db.__file__).with_name("data.db")),
+        )
+
+    def test_blank_setting_uses_existing_default(self):
+        expected = str(Path(db.__file__).with_name("data.db"))
+
+        for value in ("", "   ", "\t"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    db.configured_db_path({"DISCORDBOT_DB_PATH": value}),
+                    expected,
+                )
+
+    def test_absolute_setting_is_returned_without_creating_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "shared.db"
+
+            configured = db.configured_db_path(
+                {"DISCORDBOT_DB_PATH": f"  {path}  "}
+            )
+
+            self.assertEqual(configured, str(path))
+            self.assertFalse(path.exists())
+
+    def test_relative_setting_is_rejected_without_revealing_path(self):
+        relative_path = "private/folder/account.db"
+
+        with self.assertRaises(ValueError) as raised:
+            db.configured_db_path({"DISCORDBOT_DB_PATH": relative_path})
+
+        self.assertEqual(
+            str(raised.exception),
+            "DISCORDBOT_DB_PATH 必須是絕對路徑",
+        )
+        self.assertNotIn(relative_path, str(raised.exception))
+
+
 class SchemaInitializationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -38,6 +79,16 @@ class SchemaInitializationTests(unittest.TestCase):
                 "spending_shortcuts",
             }.issubset(self.tables())
         )
+        self.assertNotIn("ai_preferences", self.tables())
+
+    def test_legacy_ai_preferences_are_preserved_during_initialization(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("CREATE TABLE ai_preferences(user_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL)")
+            conn.execute("INSERT INTO ai_preferences VALUES('42', 1)")
+            conn.commit()
+        db.init_db()
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("SELECT * FROM ai_preferences").fetchall(), [("42", 1)])
 
     def test_repeated_initialization_preserves_existing_data(self):
         db.init_db()
