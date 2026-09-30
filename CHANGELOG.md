@@ -22,6 +22,7 @@
 ### 同版文件規劃：本機帳本儲存底座（尚未實作）
 
 - 新增 `docs/superpowers/specs/2026-09-30-local-first-storage-foundation-design.md`，記錄固定 HTTPS 靜態程式與使用者裝置本機帳本的長期方向，以及合成驗證頁的逐筆儲存、無損升級、容量與完整備份、競態／回滾和實測門檻。此段僅是設計規格；未修改產品程式、資料庫、啟動方式或依賴，版本維持 0.12.2，不能據此輸入真實帳目或停用 Python Web。
+- 新增 `docs/superpowers/plans/2026-09-30-local-first-storage-foundation.md`，把上述規格拆為雙端備份容量、IndexedDB 無損升級、逐筆交易、容量／離線實測及文件交付五個 TDD 任務。計畫尚未執行；未新增功能或執行產品驗證，版本仍為 0.12.2。
 
 ## 0.12.1 — 2026-09-30
 
