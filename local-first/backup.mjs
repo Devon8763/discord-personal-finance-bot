@@ -147,7 +147,7 @@ export function validateBackup(bundle) {
   return bundle;
 }
 export function validateStorageLimits(bundle) {
-  if (bundle.data.expenses.length > 200 || bundle.data.actions.length > 1000) invalid('本機容量上限：200筆消費／1000筆操作');
+  writeBackup(bundle);
 }
 export function readBackup(payload) {
   if (!(payload instanceof Uint8Array) || !payload.byteLength || payload.byteLength > MAX_BYTES) invalid('輸入大小／型別');

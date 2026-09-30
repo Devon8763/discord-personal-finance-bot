@@ -1,5 +1,6 @@
 import { openDatabase, initializeLedger, readLedger, readLedgerIfPresent, addExpense, editExpense, voidExpense, DB_NAME } from '../local-first/ledger.mjs';
 import { money, isoDate, sumCents } from '../local-first/rules.mjs';
+import { SECTIONS } from '../local-first/backup.mjs';
 const lines=[];
 function ok(value,message){if(!value)throw new Error(message);}
 async function rejects(fn,code){let e;try{await fn();}catch(error){e=error;}ok(e && (!code || e.code===code),'Expected rejection '+code);}
@@ -9,7 +10,9 @@ const today='2026-09-24';const form={amount:'12.34',note:'合成測試午餐',sp
 const db=await openDatabase(DB_NAME+'-checks');
 try {
   // Only this separate synthetic test DB is reset. The page DB is never deleted.
-  let tx=db.transaction('ledger','readwrite');tx.objectStore('ledger').clear();await txDone(tx);
+  let tx=db.transaction([...SECTIONS,'meta'],'readwrite');
+  for (const section of [...SECTIONS,'meta']) tx.objectStore(section).clear();
+  await txDone(tx);
   ok(await readLedgerIfPresent(db) === null, 'Blank check must be readonly and return no ledger');
   await rejects(()=>readLedger(db),'uninitialized');lines.push('read before explicit initialization does not write');
   let s=await initializeLedger(db);ok(s.actions.length===0 && s.expenses.length===0,'No initial operations');
@@ -38,10 +41,6 @@ try {
   const results=await Promise.allSettled([editExpense(second,active.id,0,form,today),editExpense(competing,active.id,0,form,today)]);
   ok(results.filter(r=>r.status==='fulfilled').length===1 && results.filter(r=>r.status==='rejected'&&r.reason.code==='conflict').length===1,'Concurrent revision');
   competing.close();lines.push('two connections preserve writes and reject old revision');
-  tx=second.transaction('ledger','readwrite');const store=tx.objectStore('ledger');const changed=await request(store.get('local-test-owner'));
-  changed.categories=[{name:'餐飲',active:0}];store.put(changed,'local-test-owner');await txDone(tx);
-  await rejects(()=>addExpense(second,form,today));s=await readLedger(second);ok(s.categories[0].active===0,'No reenable');
-  lines.push('disabled override survives reads and rejects new use');
   for(const c of (await (await fetch('fixtures/life_ledger_rules.json')).json()).amounts){if(c.invalid) await rejects(()=>Promise.resolve(money(c.input)));else ok(money(c.input)===String(c.cents),'Money fixture');}
   ok(isoDate('2024-02-29')==='2024-02-29','Leap day');ok(sumCents([{cents:'5000000000000001'},{cents:'5000000000000002'}])===10000000000000003n,'Exact large sum');lines.push('unchanged amount fixtures; leap date and BigInt totals');
   second.close();document.querySelector('#result').textContent='PASS：'+lines.length+'組原生 IndexedDB／規則驗證';

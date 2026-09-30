@@ -8,9 +8,9 @@ export class StorageError extends Error {
 
 const OWNER = 'local-test-owner';
 const HEADER = ['format', 'version', 'owner'];
-const STORES = [...SECTIONS, 'meta'];
+export const STORES = [...SECTIONS, 'meta'];
 const fail = () => { throw new StorageError(); };
-const portable = state => ({ format: 'life-ledger-backup', version: 1,
+export const portable = state => ({ format: 'life-ledger-backup', version: 1,
   data: Object.fromEntries(SECTIONS.map(section => [section, state[section]])) });
 
 export function rowKey(section, row) {
@@ -33,14 +33,14 @@ function checkedLegacy(state, marker, keys) {
   return full;
 }
 
-function metadata(state) {
+export function metadata(state) {
   const bytes = writeBackup(portable(state)).byteLength;
   const rowCount = SECTIONS.filter(section => section !== 'settings')
     .reduce((total, section) => total + state[section].length, 0);
   return { created: 1, next_action_order: state.actions.length, row_count: rowCount, backup_bytes: bytes };
 }
 
-function addState(tx, state) {
+export function addState(tx, state) {
   for (const section of SECTIONS) {
     const rows = section === 'settings' ? [state.settings] : state[section];
     rows.forEach((row, position) => tx.objectStore(section).add({ key: rowKey(section, row), position, value: row }));
@@ -65,24 +65,29 @@ function snapshotFrom(records) {
   return state;
 }
 
+export function scanTransaction(tx, callback, onFailure = () => {}) {
+  const records = {};
+  for (const section of STORES) {
+    const req = tx.objectStore(section).getAll();
+    req.onsuccess = () => {
+      records[section] = req.result;
+      if (Object.keys(records).length === STORES.length) {
+        try { callback(snapshotFrom(records), Object.fromEntries(records.meta.map(row => [row.key, row.value]))); }
+        catch (error) { onFailure(error); tx.abort(); }
+      }
+    };
+  }
+}
+
 export function readSnapshot(db, optional = false) {
   return new Promise((resolve, reject) => {
     let result, failure;
     let tx;
     try { tx = db.transaction(STORES, 'readonly'); } catch { reject(new StorageError()); return; }
-    const records = {};
     tx.oncomplete = () => failure ? reject(failure) : result === null && !optional
       ? reject(new StorageError('uninitialized', '測試帳本尚未建立。')) : resolve(result);
     tx.onabort = () => reject(new StorageError());
-    for (const section of STORES) {
-      const req = tx.objectStore(section).getAll();
-      req.onsuccess = () => {
-        records[section] = req.result;
-        if (Object.keys(records).length === STORES.length) {
-          try { result = snapshotFrom(records); } catch { failure = new StorageError(); }
-        }
-      };
-    }
+    scanTransaction(tx, state => { result = state; }, error => { failure = error; });
   });
 }
 

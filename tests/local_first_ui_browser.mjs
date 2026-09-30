@@ -1,4 +1,6 @@
 import { DB_NAME, openDatabase, initializeLedger, readLedger } from '../local-first/ledger.mjs';
+import { SECTIONS, writeBackup } from '../local-first/backup.mjs';
+import { portable } from '../local-first/idb.mjs';
 const lines = [];
 const report = document.createElement('pre');
 document.body.prepend(report);
@@ -18,15 +20,18 @@ function done(action) {
 const open = indexedDB.open.bind(indexedDB);
 indexedDB.open = (name, version) => open(name === DB_NAME ? DB_NAME + '-ui-checks' : name, version);
 const db = await openDatabase();
-let tx = db.transaction('ledger', 'readwrite');
-tx.objectStore('ledger').clear();
+let tx = db.transaction([...SECTIONS,'meta'], 'readwrite');
+for (const section of [...SECTIONS,'meta']) tx.objectStore(section).clear();
 await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onabort = reject; });
 try {
   const initial = await initializeLedger(db);
   const maliciousCategory = '<img src=x onerror=alert(2)>合成分類';
-  initial.categories.push({ name: maliciousCategory, active: 1 });
-  tx = db.transaction('ledger', 'readwrite');
-  tx.objectStore('ledger').put(initial, 'local-test-owner');
+  const changed = structuredClone(initial);
+  changed.categories.push({ name: maliciousCategory, active: 1 });
+  tx = db.transaction(['categories','meta'], 'readwrite');
+  tx.objectStore('categories').add({ key:maliciousCategory, position:0, value:changed.categories[0] });
+  tx.objectStore('meta').put({ key:'row_count', value:3 });
+  tx.objectStore('meta').put({ key:'backup_bytes', value:writeBackup(portable(changed)).byteLength });
   await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onabort = reject; });
   await import('../local-first/page.mjs');
   const form = document.querySelector('#expense-form');

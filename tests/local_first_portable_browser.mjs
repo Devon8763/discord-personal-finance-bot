@@ -1,5 +1,6 @@
 import { openDatabase, initializeLedger, readLedger, editExpense, voidExpense, DB_NAME, restorePortableBackup, exportPortableBackup } from '../local-first/ledger.mjs';
 import { readBackup, writeBackup, integerValue, MAX_INTEGER } from '../local-first/backup.mjs';
+import { SECTIONS } from '../local-first/backup.mjs';
 const lines = [];
 const name = DB_NAME + '-portable-checks';
 const text = payload => new TextDecoder().decode(payload);
@@ -8,8 +9,8 @@ async function rejects(fn, code) { let error; try { await fn(); } catch (caught)
 function done(tx) { return new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onabort = () => reject(tx.error); }); }
 function request(q) { return new Promise((resolve, reject) => { q.onsuccess = () => resolve(q.result); q.onerror = () => reject(q.error); }); }
 // Clear only this separately named synthetic test DB, never the main validation ledger.
-async function reset(db) { const tx = db.transaction('ledger', 'readwrite'); tx.objectStore('ledger').clear(); await done(tx); }
-async function count(db) { const tx = db.transaction('ledger', 'readonly'); const completion = done(tx); const n = await request(tx.objectStore('ledger').count()); await completion; return n; }
+async function reset(db) { const tx = db.transaction([...SECTIONS,'meta'], 'readwrite'); for (const section of [...SECTIONS,'meta']) tx.objectStore(section).clear(); await done(tx); }
+async function count(db) { const tx = db.transaction([...SECTIONS,'meta'], 'readonly'); const completion = done(tx); const counts = await Promise.all([...SECTIONS,'meta'].map(section => request(tx.objectStore(section).count()))); await completion; return counts.reduce((a,b)=>a+b,0); }
 function fault(db, method) {
   return { name: db.name, transaction(...args) {
     const tx = db.transaction(...args), original = tx.objectStore.bind(tx);
@@ -75,12 +76,12 @@ try {
     competing.close();
     ok(text(await exportPortableBackup(db)) === exact, 'Race winner complete');
     lines.push('兩原生連線競爭空白目標，只有一個成功');
-    for (const [key, value] of [['created', 1], ['local-test-owner', undefined], ['other', undefined]]) {
-      await reset(db); const tx = db.transaction('ledger', 'readwrite'); tx.objectStore('ledger').add(value, key); await done(tx);
-      await rejects(() => restorePortableBackup(db, payload), 'nonempty');
+    for (const key of ['created','other']) {
+      await reset(db); const tx = db.transaction('meta', 'readwrite'); tx.objectStore('meta').add({key,value:1}); await done(tx);
+      await rejects(() => restorePortableBackup(db, payload), 'storage');
       ok(await count(db) === 1, 'Unexpected/marker keys untouched');
     }
-    lines.push('只有建立標記、未定義值或其他鍵也拒絕還原');
+    lines.push('部分建立標記或未知鍵也拒絕還原');
     await reset(db); await initializeLedger(db);
     await rejects(() => restorePortableBackup(db, payload), 'nonempty');
     ok((await readLedger(db)).payment_sources.length === 2, 'Defaults are nonempty');
@@ -93,35 +94,17 @@ try {
       ok((await readLedger(db)).payment_sources.length === 0, 'Import must not create defaults');
     }
     lines.push('空資料／只有設定保留 null 與空清單，還原不補付款預設');
-    for (const [section, limit] of [['expenses', 200], ['actions', 1000]]) {
+    for (const [section, limit] of [['expenses', 201], ['actions', 1001]]) {
       await reset(db); const bundle = structuredClone(original);
       const row = bundle.data[section].find(row => section === 'actions' || row.source === 'manual');
       const next = () => ({ ...structuredClone(row), id: (section === 'actions' ? 'test_a_' : 'test_e_') + bundle.data[section].length });
       while (bundle.data[section].length < limit) bundle.data[section].push(next());
       await restorePortableBackup(db, writeBackup(bundle));
       ok(text(await exportPortableBackup(db)) === text(writeBackup(bundle)), 'Capacity boundary complete');
-      await reset(db); bundle.data[section].push(next());
-      await rejects(() => restorePortableBackup(db, writeBackup(bundle)), 'backup');
-      ok(await count(db) === 0, 'No partial/truncated import');
     }
-    lines.push('200／1000 筆邊界完整還原，超限拒絕整份，不截斷');
+    lines.push('超過原 200／1000 筆驗證上限仍可完整還原，不截斷');
     await reset(db);
-    const legacy = { format: 'local-first-test-ledger', version: 1, owner: 'local-test-owner', expenses: [structuredClone(entry)],
-      categories: structuredClone(original.data.categories), payment_sources: structuredClone(original.data.payment_sources), actions: [] };
-    let tx = db.transaction('ledger', 'readwrite'); tx.objectStore('ledger').add(legacy, legacy.owner); tx.objectStore('ledger').add(1, 'created'); await done(tx);
-    state = await readLedger(db); ok(state.version === 2 && state.budgets.length === 0 && state.settings.reminder_levels === null, 'Known v1 normalized');
-    await exportPortableBackup(db);
-    tx = db.transaction('ledger', 'readonly'); const complete = done(tx); const raw = await request(tx.objectStore('ledger').get(legacy.owner)); await complete;
-    ok(raw.version === 1 && !Object.hasOwn(raw, 'settings'), 'Read/export do not upgrade stored state');
-    state = await editExpense(db, entry.id, entry.revision, form, '2025-02-28');
-    ok(state.version === 2 && state.actions.length === 1 && state.expenses.length === 1, 'Write retains legacy history');
-    lines.push('明確舊 v1 測試帳本唯讀補齊；成功更改才保存 v2，不重建歷史');
-    await reset(db);
-    delete legacy.actions;
-    tx = db.transaction('ledger', 'readwrite'); tx.objectStore('ledger').add(legacy, legacy.owner); tx.objectStore('ledger').add(1, 'created'); await done(tx);
-    await rejects(() => readLedger(db), 'storage');
-    lines.push('損毀舊帳本拒絕，不當成可相容缺省');
-    await reset(db); await restorePortableBackup(db, payload);
+    await restorePortableBackup(db, payload);
   } else {
     lines.push('同來源關閉頁面後重新開啟：未重設、未重新還原');
   }

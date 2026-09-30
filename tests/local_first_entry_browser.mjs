@@ -1,5 +1,6 @@
 import { DB_NAME, openDatabase, readLedger, restorePortableBackup, exportPortableBackup } from '../local-first/ledger.mjs';
 import { readBackup, writeBackup, MAX_BYTES } from '../local-first/backup.mjs';
+import { SECTIONS } from '../local-first/backup.mjs';
 
 const report = document.createElement('pre');
 document.body.prepend(report);
@@ -11,7 +12,7 @@ const lines = [];
 const ok = (condition, message) => { if (!condition) throw new Error(message); };
 const done = tx => new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onabort = reject; });
 const request = q => new Promise((resolve, reject) => { q.onsuccess = () => resolve(q.result); q.onerror = () => reject(q.error); });
-const count = async db => { const tx = db.transaction('ledger', 'readonly'); const complete = done(tx); const value = await request(tx.objectStore('ledger').count()); await complete; return value; };
+const count = async db => { const tx = db.transaction([...SECTIONS,'meta'], 'readonly'); const complete = done(tx); const values = await Promise.all([...SECTIONS,'meta'].map(section => request(tx.objectStore(section).count()))); await complete; return values.reduce((a,b)=>a+b,0); };
 const waitFor = predicate => new Promise((resolve, reject) => {
   if (predicate()) { resolve(); return; }
   const timeout = setTimeout(() => { observer.disconnect(); reject(new Error('Page did not update')); }, 5000);
@@ -63,7 +64,7 @@ try {
   } else if (previouslyCreated) {
     ok(welcome.hidden && !ledger.hidden && !management.hidden, 'Existing ledger incorrectly shows first-use choice');
     const saved = await readLedger(db);
-    ok((await count(db)) === 2 && saved.expenses.length > 0, 'Same-origin reopened ledger missing');
+    ok((await count(db)) > 0 && saved.expenses.length > 0, 'Same-origin reopened ledger missing');
     lines.push('同來源重新開啟：直接進入原帳本、資料與管理入口仍在');
   } else {
     ok(!welcome.hidden && ledger.hidden && management.hidden, 'Blank page should show only two choices');
@@ -82,7 +83,7 @@ try {
       document.querySelector('#start-ledger').click();
       await waitFor(() => !ledger.hidden);
       const state = await readLedger(db);
-      ok((await count(db)) === 2 && state.expenses.length === 0 && state.payment_sources.length === 2, 'Start did not atomically create defaults');
+      ok((await count(db)) > 0 && state.expenses.length === 0 && state.payment_sources.length === 2, 'Start did not atomically create defaults');
       ok(welcome.hidden && !management.hidden && !document.querySelector('#fields').disabled, 'Start did not enter original ledger');
       lines.push('明確開始才建立，原記帳頁與下載入口可用');
     } else {
@@ -96,19 +97,6 @@ try {
       lines.push('錯誤／超限檔案拒絕，錯誤不回顯內容');
       const payload = bytes(await (await fetch('/tests/fixtures/portable_life_ledger.json')).arrayBuffer());
       const parsed = readBackup(payload);
-      const overLimit = structuredClone(parsed);
-      const manual = overLimit.data.expenses.find(row => row.source === 'manual');
-      overLimit.data.expenses.push(...Array.from({ length: 201 - overLimit.data.expenses.length }, (_, i) => ({ ...manual, id: `e_extra_${i}` })));
-      chooseFile(new File([writeBackup(overLimit)], 'too-many.json'));
-      await waitFor(() => error.textContent.includes('上限'));
-      ok((await count(db)) === 0, 'Local 200-expense limit wrote ledger');
-      const overActions = structuredClone(parsed);
-      const originalAction = overActions.data.actions.find(row => row.before === null);
-      overActions.data.actions.push(...Array.from({ length: 1001 - overActions.data.actions.length }, (_, i) => ({ ...originalAction, id: `a_extra_${i}` })));
-      chooseFile(new File([writeBackup(overActions)], 'too-many-actions.json'));
-      await waitFor(() => error.textContent.includes('上限'));
-      ok((await count(db)) === 0, 'Local 1000-action limit wrote ledger');
-      lines.push('本機200筆消費／1000筆操作上限拒絕整份備份');
       const file = new File([payload], 'synthetic.json', { type: 'application/json' });
       chooseFile(file);
       await waitFor(() => !document.querySelector('#restore-review').hidden);

@@ -72,14 +72,14 @@ test('legal historical data and Python whitespace/Unicode semantics remain intac
   assert.equal(value.data.budgets[0].cents,'0');
   assert.equal(value.data.expenses.at(-1).recurring_id,null);
 });
-test('format limits are independent from local 200 / 1000 limits', async () => {
+test('more than 200 expenses or 1000 actions remain fully exportable', async () => {
   const b=await module(); const source=b.readBackup(fixture);const value=empty();
   value.data.expenses=Array.from({length:201},(_,i)=>({...source.data.expenses[0],id:'e_'+i,payment_source_id:null}));
   assert.doesNotThrow(()=>b.validateBackup(value));
-  assert.throws(()=>b.validateStorageLimits(value),b.BackupError);
+  assert.doesNotThrow(()=>b.validateStorageLimits(value));
   value.data.expenses=value.data.expenses.slice(0,1);
   value.data.actions=Array.from({length:1001},(_,i)=>({id:'a_'+i,expense_id:'e_0',before:null,undone:0}));
-  assert.doesNotThrow(()=>b.validateBackup(value)); assert.throws(()=>b.validateStorageLimits(value),b.BackupError);
+  assert.doesNotThrow(()=>b.validateBackup(value)); assert.doesNotThrow(()=>b.validateStorageLimits(value));
   const many=empty();many.data.categories=Array.from({length:100001},(_,i)=>({name:'c'+i,active:0}));
   assert.throws(()=>b.validateBackup(many),b.BackupError);
 });
