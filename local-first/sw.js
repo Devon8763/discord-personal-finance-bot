@@ -1,11 +1,12 @@
 // Bump this name whenever any cached asset or this worker changes.
-const CACHE = 'local-first-offline-0.12.2-v1';
+const CACHE = 'local-first-offline-0.13.0-v1';
 const ASSETS = [
   '/local-first/',
   '/local-first/index.html',
   '/local-first/style.css',
   '/local-first/page.mjs',
   '/local-first/ledger.mjs',
+  '/local-first/idb.mjs',
   '/local-first/rules.mjs',
   '/local-first/backup.mjs',
   '/local-first/vendor/lossless-json-4.3.1/lossless-json.js',

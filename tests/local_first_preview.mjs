@@ -1,5 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+const port = Number(process.argv[2] ?? 8767);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid local preview port');
 const files = new Map([
   ['/local-first/', ['../local-first/index.html', 'text/html']],
   ...['index.html', 'style.css', 'rules.mjs', 'ledger.mjs', 'idb.mjs', 'page.mjs', 'backup.mjs'].map(name => ['/local-first/' + name, ['../local-first/' + name, name.endsWith('.css') ? 'text/css' : name.endsWith('.html') ? 'text/html' : 'text/javascript']]),
@@ -11,6 +13,8 @@ const files = new Map([
   ['/tests/local_first_browser.mjs', ['local_first_browser.mjs', 'text/javascript']],
   ['/tests/local_first_storage_browser.html', ['local_first_storage_browser.html', 'text/html']],
   ['/tests/local_first_storage_browser.mjs', ['local_first_storage_browser.mjs', 'text/javascript']],
+  ['/tests/local_first_scale_browser.html', ['local_first_scale_browser.html', 'text/html']],
+  ['/tests/local_first_scale_browser.mjs', ['local_first_scale_browser.mjs', 'text/javascript']],
   ['/tests/local_first_ui_browser.mjs', ['local_first_ui_browser.mjs', 'text/javascript']],
   ['/tests/local_first_entry_browser.mjs', ['local_first_entry_browser.mjs', 'text/javascript']],
   ['/tests/local-first-ui.html', ['../local-first/index.html', 'text/html']],
@@ -42,4 +46,4 @@ createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     response.end(body);
   } catch { response.writeHead(404); response.end(); }
-}).listen(8767, '127.0.0.1', () => console.log('Synthetic static preview: http://127.0.0.1:8767/local-first/'));
+}).listen(port, '127.0.0.1', () => console.log(`Synthetic static preview: http://127.0.0.1:${port}/local-first/`));
