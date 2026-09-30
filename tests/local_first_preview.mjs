@@ -2,13 +2,15 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 const files = new Map([
   ['/local-first/', ['../local-first/index.html', 'text/html']],
-  ...['index.html', 'style.css', 'rules.mjs', 'ledger.mjs', 'page.mjs', 'backup.mjs'].map(name => ['/local-first/' + name, ['../local-first/' + name, name.endsWith('.css') ? 'text/css' : name.endsWith('.html') ? 'text/html' : 'text/javascript']]),
+  ...['index.html', 'style.css', 'rules.mjs', 'ledger.mjs', 'idb.mjs', 'page.mjs', 'backup.mjs'].map(name => ['/local-first/' + name, ['../local-first/' + name, name.endsWith('.css') ? 'text/css' : name.endsWith('.html') ? 'text/html' : 'text/javascript']]),
   ['/local-first/sw.js', ['../local-first/sw.js', 'text/javascript']],
   ...['lossless-json.js', 'lossless-json.js.map'].map(name => ['/local-first/vendor/lossless-json-4.3.1/' + name, ['../local-first/vendor/lossless-json-4.3.1/' + name, name.endsWith('.map') ? 'application/json' : 'text/javascript']]),
   ['/tests/local_first_portable_browser.html', ['local_first_portable_browser.html', 'text/html']],
   ['/tests/local_first_portable_browser.mjs', ['local_first_portable_browser.mjs', 'text/javascript']],
   ['/tests/local_first_browser.html', ['local_first_browser.html', 'text/html']],
   ['/tests/local_first_browser.mjs', ['local_first_browser.mjs', 'text/javascript']],
+  ['/tests/local_first_storage_browser.html', ['local_first_storage_browser.html', 'text/html']],
+  ['/tests/local_first_storage_browser.mjs', ['local_first_storage_browser.mjs', 'text/javascript']],
   ['/tests/local_first_ui_browser.mjs', ['local_first_ui_browser.mjs', 'text/javascript']],
   ['/tests/local_first_entry_browser.mjs', ['local_first_entry_browser.mjs', 'text/javascript']],
   ['/tests/local-first-ui.html', ['../local-first/index.html', 'text/html']],
