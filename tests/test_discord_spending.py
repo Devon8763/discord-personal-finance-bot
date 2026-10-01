@@ -68,7 +68,7 @@ class DiscordSpendingTests(unittest.IsolatedAsyncioTestCase):
                 await command(f'!預算 {month} 總額 20000')
                 await command(f'!預算 {month} 餐飲 6000')
                 await command('!支出 150 餐飲 午餐 加飲料')
-                await command(f'!固定新增 分期 "工作 筆電" 3000 購物 {month} 10 5')
+                await command(f'!固定新增 分期 "工作 筆電" 3000 購物 {month} 10 1')
                 self.assertEqual(sp.month_report('42')['total'],3150)
                 ctx = await command('!月報')
                 self.assertIn('3,150',ctx.send.await_args.args[0])

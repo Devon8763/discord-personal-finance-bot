@@ -1,4 +1,4 @@
-import { openLedgerDatabase, readSnapshot } from '../local-first/idb.mjs';
+import { STORES, openLedgerDatabase, readSnapshot } from '../local-first/idb.mjs';
 import { readBackup, writeBackup } from '../local-first/backup.mjs';
 
 const prefix = 'discordbot-localfirst-synthetic-v1-storage-checks';
@@ -76,6 +76,22 @@ try {
   try { (await openLedgerDatabase(futureName)).close(); } catch { futureRejected=true; }
   ok(futureRejected,'Future DB version must reject'); lines.push('future version rejected');
 
+  const extraName = prefix + '-extra-store';
+  await erase(extraName);
+  const extraOpening = indexedDB.open(extraName,2);
+  extraOpening.onupgradeneeded = () => {
+    for (const section of [...STORES,'unexpected']) extraOpening.result.createObjectStore(section,{keyPath:'key'});
+    extraOpening.transaction.objectStore('unexpected').add({key:'private',value:'preserve'});
+  };
+  (await request(extraOpening)).close();
+  let extraRejected=false;
+  try { (await openLedgerDatabase(extraName)).close(); } catch { extraRejected=true; }
+  ok(extraRejected,'Unknown nonempty store must stop writes');
+  const extraRaw=await request(indexedDB.open(extraName,2));
+  const extraTx=extraRaw.transaction('unexpected','readonly');
+  ok((await request(extraTx.objectStore('unexpected').get('private'))).value==='preserve','Unknown store survives rejection');
+  extraRaw.close(); lines.push('unknown populated v2 store is preserved and refused');
+
   const blockedName = prefix + '-blocked';
   await erase(blockedName); await seed(blockedName,original);
   const old = await request(indexedDB.open(blockedName,1));
@@ -84,7 +100,10 @@ try {
   try { (await openLedgerDatabase(blockedName)).close(); } catch { blocked=true; }
   ok(blocked,'Old tab blocks upgrade');
   ok(old.objectStoreNames.contains('ledger'), 'Blocked DB unchanged');
-  old.close(); lines.push('blocked upgrade preserves old store');
+  old.close();
+  const blockedAfterClose=await request(indexedDB.open(blockedName,1));
+  ok(blockedAfterClose.objectStoreNames.contains('ledger'),'Rejected blocked request must not upgrade later');
+  blockedAfterClose.close(); lines.push('blocked upgrade preserves old store after old tab closes');
 
   document.querySelector('#result').textContent = 'PASS：' + lines.length + '組逐筆儲存驗證';
 } catch (error) { document.querySelector('#result').textContent = 'FAIL：' + error.message; throw error; }

@@ -18,21 +18,22 @@ const storageFailure = () => new LedgerError('storage', '儲存未完成，資�
 
 function transaction(db, operation) {
   return new Promise((resolve, reject) => {
-    let failure;
+    let failure, result;
     let tx;
     try { tx = db.transaction(STORES, 'readwrite'); } catch { reject(storageFailure()); return; }
-    tx.oncomplete = () => readSnapshot(db).then(resolve, reject);
+    tx.oncomplete = () => resolve(result);
     tx.onabort = () => reject(failure || storageFailure());
-    scanTransaction(tx, (state, meta) => operation(tx, state, meta), error => { failure = error; });
+    scanTransaction(tx, (state, meta) => { result = operation(tx, state, meta); }, error => { failure = error; });
   });
 }
 
 export function initializeLedger(db) {
   return transaction(db, (tx, state) => {
-    if (state !== null) return;
+    if (state !== null) return state;
     const initial = { format:'local-first-test-ledger', version:2, owner:'local-test-owner', ...emptyData(),
       payment_sources:[{ id:'p_cash', name:'現金', active:1 }, { id:'p_unspecified', name:'未指定', active:1 }] };
     addState(tx, initial);
+    return initial;
   });
 }
 
@@ -43,7 +44,9 @@ export function restorePortableBackup(db, payload, confirmedMain = false) {
   const parsed = readBackup(payload);
   return transaction(db, (tx, state) => {
     if (state !== null) throw new LedgerError('nonempty', '目標測試帳本已有資料或建立標記，無法還原。');
-    addState(tx, { format:'local-first-test-ledger', version:2, owner:'local-test-owner', ...parsed.data });
+    const restored = { format:'local-first-test-ledger', version:2, owner:'local-test-owner', ...parsed.data };
+    addState(tx, restored);
+    return restored;
   });
 }
 export const exportPortableBackup = async db => writeBackup(portable(await readSnapshot(db)));
@@ -74,12 +77,16 @@ function save(tx, state, meta, entry, before, position) {
   tx.objectStore('meta').put({ key:'next_action_order', value:meta.next_action_order + 1 });
   tx.objectStore('meta').put({ key:'row_count', value:meta.row_count + 1 + Number(expenseAdded) });
   tx.objectStore('meta').put({ key:'backup_bytes', value:meta.backup_bytes + delta });
+  if (expenseAdded) state.expenses.push(entry);
+  else state.expenses[position] = entry;
+  state.actions.push(action);
 }
 
 function write(db, change) {
   return transaction(db, (tx, state, meta) => {
     if (state === null) throw new LedgerError('uninitialized', '測試帳本尚未建立。');
     change(tx, state, meta);
+    return state;
   });
 }
 export function addExpense(db, form, today) {

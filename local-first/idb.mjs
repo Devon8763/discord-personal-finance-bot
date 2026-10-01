@@ -101,6 +101,7 @@ export function openLedgerDatabase(name) {
     request.onupgradeneeded = event => {
       const db = request.result;
       const tx = request.transaction;
+      if (settled) { tx.abort(); return; }
       try {
         if (event.oldVersion !== 0 && (event.oldVersion !== 1 || db.objectStoreNames.length !== 1 ||
             !db.objectStoreNames.contains('ledger'))) fail();
@@ -136,6 +137,9 @@ export function openLedgerDatabase(name) {
     request.onsuccess = () => {
       const db = request.result;
       if (settled) { db.close(); return; }
+      if (db.objectStoreNames.length !== STORES.length || STORES.some(store => !db.objectStoreNames.contains(store))) {
+        db.close(); rejectSafe('本機測試帳本結構不符合預期，請保留資料並停止操作。'); return;
+      }
       settled = true;
       db.onversionchange = () => db.close();
       resolve(db);

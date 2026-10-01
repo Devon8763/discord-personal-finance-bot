@@ -41,6 +41,14 @@ try {
   const results=await Promise.allSettled([editExpense(second,active.id,0,form,today),editExpense(competing,active.id,0,form,today)]);
   ok(results.filter(r=>r.status==='fulfilled').length===1 && results.filter(r=>r.status==='rejected'&&r.reason.code==='conflict').length===1,'Concurrent revision');
   competing.close();lines.push('two connections preserve writes and reject old revision');
+  const beforeCommitRead=await readLedger(second);
+  const noPostRead={transaction(...args){if(args[1]==='readonly')throw new Error('Synthetic post-commit read failure');return second.transaction(...args);}};
+  const committed=await addExpense(noPostRead,{...form,note:'提交後讀取故障'},today);
+  const persisted=await readLedger(second);
+  ok(committed.actions.length===beforeCommitRead.actions.length+1 &&
+    persisted.actions.length===committed.actions.length &&
+    persisted.expenses.at(-1).note==='提交後讀取故障','Commit must resolve without a second read');
+  lines.push('committed write remains successful when a later readonly transaction cannot open');
   for(const c of (await (await fetch('fixtures/life_ledger_rules.json')).json()).amounts){if(c.invalid) await rejects(()=>Promise.resolve(money(c.input)));else ok(money(c.input)===String(c.cents),'Money fixture');}
   ok(isoDate('2024-02-29')==='2024-02-29','Leap day');ok(sumCents([{cents:'5000000000000001'},{cents:'5000000000000002'}])===10000000000000003n,'Exact large sum');lines.push('unchanged amount fixtures; leap date and BigInt totals');
   second.close();document.querySelector('#result').textContent='PASS：'+lines.length+'組原生 IndexedDB／規則驗證';

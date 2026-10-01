@@ -80,7 +80,7 @@ test('activation removes only this feature’s old cache after successful instal
   assert.equal(sw.storage.has('local-first-offline-previous'), false);
   assert.equal(sw.storage.has('other-cache'), true);
   assert.equal(await sw.ready(), true);
-  sw.storage.get('local-first-offline-0.13.0-v1').delete('/local-first/backup.mjs');
+  sw.storage.get('local-first-offline-0.13.0-v2').delete('/local-first/backup.mjs');
   assert.equal(await sw.ready(), false);
   assert.deepEqual(await sw.fetch('/local-first/backup.mjs'), { error: 'cache-miss' });
 });
@@ -88,7 +88,7 @@ test('activation removes only this feature’s old cache after successful instal
 test('incomplete new cache cannot activate or remove the old version', async () => {
   const sw = worker({ existing: new Map([['local-first-offline-previous', new Map()]]) });
   await sw.run('install');
-  sw.storage.get('local-first-offline-0.13.0-v1').delete('/local-first/backup.mjs');
+  sw.storage.get('local-first-offline-0.13.0-v2').delete('/local-first/backup.mjs');
   await assert.rejects(sw.run('activate'), /Incomplete offline cache/);
   assert.equal(sw.storage.has('local-first-offline-previous'), true);
 });
