@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../local-first/sw.js', import.meta.url), 'utf8');
-const required = ['/local-first/', '/local-first/index.html', '/local-first/style.css', '/local-first/page.mjs', '/local-first/ledger.mjs', '/local-first/idb.mjs', '/local-first/rules.mjs', '/local-first/backup.mjs', '/local-first/vendor/lossless-json-4.3.1/lossless-json.js'];
+const required = ['/local-first/', '/local-first/index.html', '/local-first/style.css', '/local-first/page.mjs', '/local-first/ledger.mjs', '/local-first/idb.mjs', '/local-first/rules.mjs', '/local-first/browse.mjs', '/local-first/backup.mjs', '/local-first/vendor/lossless-json-4.3.1/lossless-json.js'];
 
 function worker({ broken = '', existing = new Map() } = {}) {
   const handlers = new Map();
@@ -74,13 +74,13 @@ test('missing asset prevents readiness and failed update leaves old cache', asyn
 });
 
 test('activation removes only this feature’s old cache after successful install', async () => {
-  const sw = worker({ existing: new Map([['local-first-offline-previous', new Map()], ['other-cache', new Map()]]) });
+  const sw = worker({ existing: new Map([['local-first-offline-0.13.2-v3', new Map()], ['other-cache', new Map()]]) });
   await sw.run('install');
   await sw.run('activate');
-  assert.equal(sw.storage.has('local-first-offline-previous'), false);
+  assert.equal(sw.storage.has('local-first-offline-0.13.2-v3'), false);
   assert.equal(sw.storage.has('other-cache'), true);
   assert.equal(await sw.ready(), true);
-  sw.storage.get('local-first-offline-0.13.0-v2').delete('/local-first/backup.mjs');
+  sw.storage.get([...sw.storage.keys()].find(name => name.startsWith('local-first-offline-'))).delete('/local-first/backup.mjs');
   assert.equal(await sw.ready(), false);
   assert.deepEqual(await sw.fetch('/local-first/backup.mjs'), { error: 'cache-miss' });
 });
@@ -88,7 +88,7 @@ test('activation removes only this feature’s old cache after successful instal
 test('incomplete new cache cannot activate or remove the old version', async () => {
   const sw = worker({ existing: new Map([['local-first-offline-previous', new Map()]]) });
   await sw.run('install');
-  sw.storage.get('local-first-offline-0.13.0-v2').delete('/local-first/backup.mjs');
+  sw.storage.get([...sw.storage.keys()].find(name => name.startsWith('local-first-offline-') && name !== 'local-first-offline-previous')).delete('/local-first/backup.mjs');
   await assert.rejects(sw.run('activate'), /Incomplete offline cache/);
   assert.equal(sw.storage.has('local-first-offline-previous'), true);
 });

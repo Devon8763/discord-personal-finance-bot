@@ -16,6 +16,29 @@ button:disabled { cursor: wait; opacity: .6; }
 .buttons { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 fieldset > .buttons { margin-top: 1rem; }
 #error, #delete-error { color: #a2241b; overflow-wrap: anywhere; }
+#search-error, #calendar-error { color: #a2241b; }
+#settings-error, #setting-error { color: #a2241b; overflow-wrap: anywhere; }
+#budget-error { color: #a2241b; overflow-wrap: anywhere; }
+#budget-setting-list li, #category-budget-list li { padding: .6rem 0; border-bottom: 1px solid #dce5df; overflow-wrap: anywhere; }
+#budget-setting-list form { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; margin-bottom: .5rem; }
+#budget-setting-list label { flex: 1 1 180px; }
+#budget-setting-list button { overflow-wrap: anywhere; }
+#budget-total h3, #budget-setting-list h3, #category-budget-list h3 { font-size: 1rem; margin: .5rem 0; }
+progress { width: 100%; max-width: 400px; }
+summary { cursor: pointer; min-height: 44px; padding: .6rem 0; font-weight: bold; }
+#category-add, #payment-add { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin-bottom: .5rem; }
+#category-add label, #payment-add label { flex: 1 1 180px; }
+.settings-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .6rem 0; border-bottom: 1px solid #dce5df; }
+.settings-list span { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+#search-form .buttons { margin-top: 1rem; }
+.calendar-nav { justify-content: center; margin-bottom: .8rem; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .3rem; }
+.calendar-grid > * { min-width: 0; text-align: center; }
+.calendar-grid button, .calendar-grid span { display: grid; place-items: center; min-height: 44px; padding: .2rem; }
+.calendar-grid button[aria-pressed="true"] { outline: 2px solid #20372f; }
+.calendar-grid .marker { font-size: 1rem; line-height: 1; }
+#calendar-day-details { margin-top: 1rem; }
+#search-more, #calendar-day-more { margin-top: .7rem; }
 ul { list-style: none; padding: 0; margin: 0; }
 .expense { display: grid; grid-template-columns: 105px minmax(100px, 2fr) minmax(75px, 1fr) 1fr 1fr 118px; gap: .7rem; padding: 1rem 0; border-bottom: 1px solid #dce5df; align-items: start; }
 .expense div { min-width: 0; overflow-wrap: anywhere; }

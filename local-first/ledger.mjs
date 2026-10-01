@@ -1,7 +1,7 @@
 import * as distribution from './vendor/lossless-json-4.3.1/lossless-json.js';
-import { validateInput } from './rules.mjs';
+import { validateInput, categoryOptions, categoryName, paymentName, budgetCents, cents, isoDate, ValidationError } from './rules.mjs';
 import { emptyData, readBackup, writeBackup, integerValue, storedInteger, MAX_INTEGER, MAX_BYTES } from './backup.mjs';
-import { STORES, openLedgerDatabase, readSnapshot, scanTransaction, addState, portable } from './idb.mjs';
+import { STORES, openLedgerDatabase, readSnapshot, scanTransaction, addState, portable, metadata, rowKey } from './idb.mjs';
 
 export const DB_NAME = 'discordbot-localfirst-synthetic-v1';
 const { stringify } = distribution.default ?? globalThis.LosslessJSON;
@@ -12,6 +12,11 @@ export class LedgerError extends Error {
 export const openDatabase = (name = DB_NAME) => openLedgerDatabase(name);
 export const readLedger = db => readSnapshot(db);
 export const readLedgerIfPresent = db => readSnapshot(db, true);
+export function taiwanToday() {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone:'Asia/Taipei', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date());
+  const value = type => parts.find(part => part.type === type).value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
 const identifier = prefix => prefix + crypto.randomUUID();
 const length = row => encoder.encode(stringify(row)).byteLength;
 const storageFailure = () => new LedgerError('storage', '儲存未完成，資料沒有變更。請確認儲存空間後重試。');
@@ -109,5 +114,165 @@ export function voidExpense(db, id, expectedRevision) {
     const {entry, position} = current(state, id, expectedRevision);
     save(tx, state, meta, { ...entry, voided:1, revision:storedInteger(integerValue(entry.revision) + 1n) },
       structuredClone(entry), position);
+  });
+}
+
+function incrementRevision(row) {
+  const revision = integerValue(row.revision);
+  if (revision === MAX_INTEGER) throw new LedgerError('limit', '版本已達 signed 64-bit 上限，請停止操作。');
+  row.revision = storedInteger(revision + 1n);
+}
+
+export function changeCategory(state, operation, oldName, value) {
+  metadata(state); // Reject corrupt or over-limit history before preparing any changes.
+  const changed = structuredClone(state);
+  const options = categoryOptions(state);
+  if (operation === 'add') {
+    const name = categoryName(value);
+    if (options.some(row => row.name === name)) throw new ValidationError('已有同名分類（含停用項目），請使用其他名稱。');
+    changed.categories.push({ name, active:1 });
+  } else {
+    if (!options.some(row => row.name === oldName && row.active === 1)) throw new ValidationError('找不到啟用中的分類，請重新載入。');
+    const position = changed.categories.findIndex(row => row.name === oldName);
+    if (operation === 'disable') {
+      if (position < 0) changed.categories.push({ name:oldName, active:0 });
+      else changed.categories[position].active = 0;
+    } else if (operation === 'rename') {
+      const name = categoryName(value);
+      const references = ['expenses', 'budgets', 'recurring_rules', 'recurring_versions', 'shortcuts'];
+      if (options.some(row => row.name === name) || references.some(section => state[section].some(row => row.category === name)) ||
+          state.actions.some(row => row.before?.category === name)) {
+        throw new ValidationError('已有同名分類或歷史，不能合併分類。');
+      }
+      // Missing overrides identify builtin defaults; explicit builtin overrides still use the same rule.
+      if (categoryOptions({categories:[]}).some(row => row.name === oldName)) {
+        if (position < 0) changed.categories.push({ name:oldName, active:0 });
+        else changed.categories[position].active = 0;
+        changed.categories.push({ name, active:1 });
+      } else changed.categories[position].name = name;
+      const versionRules = new Set(state.recurring_versions.filter(row => row.category === oldName).map(row => row.recurring_id));
+      for (const row of changed.recurring_rules) {
+        if (row.category === oldName || versionRules.has(row.id)) incrementRevision(row);
+      }
+      for (const section of references) for (const row of changed[section]) {
+        if (row.category !== oldName) continue;
+        row.category = name;
+        if (section === 'expenses') incrementRevision(row);
+      }
+      for (const row of changed.actions) if (row.before?.category === oldName) row.before.category = name;
+    } else throw new ValidationError('請選擇有效的分類操作。');
+  }
+  metadata(changed); // Includes complete backup validation, byte and row limits.
+  return changed;
+}
+
+function saveSettings(tx, state, changed) {
+  const meta = metadata(changed);
+  for (const section of STORES.filter(section => !['meta', 'settings'].includes(section))) {
+    changed[section].forEach((row, position) => {
+      const previous = state[section][position];
+      if (previous && stringify(previous) === stringify(row)) return;
+      const store = tx.objectStore(section);
+      if (previous && stringify(rowKey(section, previous)) !== stringify(rowKey(section, row))) store.delete(rowKey(section, previous));
+      store.put({ key:rowKey(section, row), position, value:row });
+    });
+  }
+  for (const key of ['row_count', 'backup_bytes']) tx.objectStore('meta').put({ key, value:meta[key] });
+}
+
+export function updateCategory(db, expectedCategories, operation, oldName, value) {
+  return transaction(db, (tx, state) => {
+    if (state === null) throw new LedgerError('uninitialized', '測試帳本尚未建立。');
+    if (stringify(state.categories) !== stringify(expectedCategories)) throw new LedgerError('conflict', '設定已變更，請重新載入後再操作。');
+    const changed = changeCategory(state, operation, oldName, value);
+    saveSettings(tx, state, changed);
+    return changed;
+  });
+}
+
+export function changePayment(state, operation, id, value) {
+  metadata(state);
+  const changed = structuredClone(state);
+  const row = changed.payment_sources.find(item => item.id === id);
+  if (operation !== 'add') {
+    if (!row || (operation === 'disable' && row.active !== 1)) throw new ValidationError('找不到付款方式，請重新載入。');
+    if (['現金', '未指定'].includes(row.name)) throw new ValidationError('「現金」與「未指定」不能更改或停用。');
+  }
+  if (operation === 'add' || operation === 'rename') {
+    const name = paymentName(value);
+    if (changed.payment_sources.some(item => item.name === name && (operation === 'add' || item.id !== id))) {
+      throw new ValidationError('已有同名付款方式（含停用項目），請使用其他名稱。');
+    }
+    if (operation === 'add') changed.payment_sources.push({ id:identifier('p_'), name, active:1 });
+    else row.name = name;
+  } else if (operation === 'disable') row.active = 0;
+  else throw new ValidationError('請選擇有效的付款方式操作。');
+  metadata(changed);
+  return changed;
+}
+
+export function updatePayment(db, expectedPayments, operation, id, value) {
+  return transaction(db, (tx, state) => {
+    if (state === null) throw new LedgerError('uninitialized', '測試帳本尚未建立。');
+    if (stringify(state.payment_sources) !== stringify(expectedPayments)) throw new LedgerError('conflict', '設定已變更，請重新載入後再操作。');
+    const changed = changePayment(state, operation, id, value);
+    saveSettings(tx, state, changed);
+    return changed;
+  });
+}
+
+export function changeBudget(state, operation, category, value, today) {
+  metadata(state);
+  const month = isoDate(today).slice(0, 7);
+  const changed = structuredClone(state);
+  const position = changed.budgets.findIndex(row => row.month === month && row.category === category);
+  const previous = changed.budgets[position];
+  if (operation === 'clear') {
+    if (!previous) throw new ValidationError('找不到本月預算，請重新載入。');
+    changed.budgets.splice(position, 1);
+  } else {
+    if (previous && cents(previous.cents) % 100n) throw new ValidationError('歷史小數預算只可清除；原值仍保留。');
+    let amount;
+    if (operation === 'sum' && category === '總額') {
+      const rows = changed.budgets.filter(row => row.month === month && row.category !== '總額');
+      const sum = rows.reduce((total, row) => total + cents(row.cents), 0n);
+      if (!rows.length || sum <= 0n) throw new ValidationError('目前沒有正數分類預算可合計。');
+      if (sum % 100n) throw new ValidationError('分類預算加總含歷史小數，請先清除小數預算。');
+      amount = budgetCents((sum / 100n).toString());
+    } else if (operation === 'set') {
+      if (category !== '總額' && !categoryOptions(state).some(row => row.name === category && row.active === 1)) {
+        throw new ValidationError('停用或不存在的分類不能設定預算，既有預算只可清除。');
+      }
+      amount = budgetCents(value);
+    } else throw new ValidationError('請選擇有效的預算操作。');
+    const row = {month, category, cents:amount};
+    if (position < 0) changed.budgets.push(row);
+    else changed.budgets[position] = row;
+  }
+  const rows = changed.budgets.filter(row => row.month === month);
+  const total = rows.find(row => row.category === '總額');
+  const sum = rows.filter(row => row.category !== '總額').reduce((sum, row) => sum + cents(row.cents), 0n);
+  if (total && cents(total.cents) < sum) throw new ValidationError('分類預算合計不可超過總預算。');
+  metadata(changed);
+  return changed;
+}
+
+export function updateBudget(db, expectedBudgets, operation, category, value) {
+  return transaction(db, (tx, state) => {
+    if (state === null) throw new LedgerError('uninitialized', '測試帳本尚未建立。');
+    // Read the Taiwan clock inside the write transaction; callers cannot choose a month.
+    const today = taiwanToday(), month = today.slice(0, 7);
+    const selected = rows => rows.find(row => row.month === month && row.category === category) || null;
+    if (!Array.isArray(expectedBudgets) || stringify(selected(state.budgets)) !== stringify(selected(expectedBudgets))) {
+      throw new LedgerError('conflict', '預算已變更，請重新載入後再操作。');
+    }
+    const changed = changeBudget(state, operation, category, value, today);
+    const meta = metadata(changed), store = tx.objectStore('budgets');
+    if (operation === 'clear') store.delete([month, category]);
+    changed.budgets.forEach((row, position) => {
+      if (stringify(state.budgets[position]) !== stringify(row)) store.put({key:rowKey('budgets', row), position, value:row});
+    });
+    for (const key of ['row_count', 'backup_bytes']) tx.objectStore('meta').put({key, value:meta[key]});
+    return changed;
   });
 }

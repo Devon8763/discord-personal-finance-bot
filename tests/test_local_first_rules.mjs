@@ -68,5 +68,7 @@ test('Taiwan calendar boundary is owned by entry, not pure rules', async () => {
   const code=readFileSync(url,'utf8');
   assert.doesNotMatch(code,/Date\.now|new Date|indexedDB|\bdocument\b|\bfetch\s*\(/);
   const source=readFileSync(new URL('../local-first/page.mjs',import.meta.url),'utf8');
-  assert.match(source,/timeZone: ['"]Asia\/Taipei['"]/);
+  assert.match(source,/\btaiwanToday\b.*from '\.\/ledger\.mjs'/);
+  const entry=readFileSync(new URL('../local-first/ledger.mjs',import.meta.url),'utf8');
+  assert.match(entry,/timeZone:\s*['"]Asia\/Taipei['"]/);
 });

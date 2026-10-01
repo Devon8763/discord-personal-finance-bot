@@ -4,7 +4,7 @@ const port = Number(process.argv[2] ?? 8767);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid local preview port');
 const files = new Map([
   ['/local-first/', ['../local-first/index.html', 'text/html']],
-  ...['index.html', 'style.css', 'rules.mjs', 'ledger.mjs', 'idb.mjs', 'page.mjs', 'backup.mjs'].map(name => ['/local-first/' + name, ['../local-first/' + name, name.endsWith('.css') ? 'text/css' : name.endsWith('.html') ? 'text/html' : 'text/javascript']]),
+  ...['index.html', 'style.css', 'rules.mjs', 'browse.mjs', 'ledger.mjs', 'idb.mjs', 'page.mjs', 'backup.mjs'].map(name => ['/local-first/' + name, ['../local-first/' + name, name.endsWith('.css') ? 'text/css' : name.endsWith('.html') ? 'text/html' : 'text/javascript']]),
   ['/local-first/sw.js', ['../local-first/sw.js', 'text/javascript']],
   ...['lossless-json.js', 'lossless-json.js.map'].map(name => ['/local-first/vendor/lossless-json-4.3.1/' + name, ['../local-first/vendor/lossless-json-4.3.1/' + name, name.endsWith('.map') ? 'application/json' : 'text/javascript']]),
   ['/tests/local_first_portable_browser.html', ['local_first_portable_browser.html', 'text/html']],
@@ -13,11 +13,22 @@ const files = new Map([
   ['/tests/local_first_browser.mjs', ['local_first_browser.mjs', 'text/javascript']],
   ['/tests/local_first_storage_browser.html', ['local_first_storage_browser.html', 'text/html']],
   ['/tests/local_first_storage_browser.mjs', ['local_first_storage_browser.mjs', 'text/javascript']],
+  ['/tests/local_first_settings_browser.html', ['local_first_settings_browser.html', 'text/html']],
+  ['/tests/local_first_settings_browser.mjs', ['local_first_settings_browser.mjs', 'text/javascript']],
+  ['/tests/local_first_budgets_browser.html', ['local_first_budgets_browser.html', 'text/html']],
+  ['/tests/local_first_budgets_browser.mjs', ['local_first_budgets_browser.mjs', 'text/javascript']],
+  ['/tests/local_first_budgets_ui_browser.mjs', ['local_first_budgets_ui_browser.mjs', 'text/javascript']],
+  ['/tests/local-first-budgets.html', ['../local-first/index.html', 'text/html']],
+  ['/tests/local_first_offline_settings_browser.html', ['local_first_offline_settings_browser.html', 'text/html']],
+  ['/tests/local-first-settings.html', ['../local-first/index.html', 'text/html']],
+  ['/tests/local_first_settings_ui_browser.mjs', ['local_first_settings_ui_browser.mjs', 'text/javascript']],
   ['/tests/local_first_scale_browser.html', ['local_first_scale_browser.html', 'text/html']],
   ['/tests/local_first_scale_browser.mjs', ['local_first_scale_browser.mjs', 'text/javascript']],
   ['/tests/local_first_ui_browser.mjs', ['local_first_ui_browser.mjs', 'text/javascript']],
+  ['/tests/local_first_browse_browser.mjs', ['local_first_browse_browser.mjs', 'text/javascript']],
   ['/tests/local_first_entry_browser.mjs', ['local_first_entry_browser.mjs', 'text/javascript']],
   ['/tests/local-first-ui.html', ['../local-first/index.html', 'text/html']],
+  ['/tests/local-first-browse.html', ['../local-first/index.html', 'text/html']],
   ['/tests/local-first-entry.html', ['../local-first/index.html', 'text/html']],
   ['/tests/fixtures/life_ledger_rules.json', ['fixtures/life_ledger_rules.json', 'application/json']],
   ['/tests/fixtures/portable_life_ledger.json', ['fixtures/portable_life_ledger.json', 'application/json']],
@@ -38,6 +49,18 @@ createServer(async (request, response) => {
     if (path === '/tests/local-first-ui.html') {
       body = body.toString('utf8').replace('<head>', '<head><base href="/local-first/">')
         .replace('src="page.mjs"', 'src="/tests/local_first_ui_browser.mjs"');
+    }
+    if (path === '/tests/local-first-settings.html') {
+      body = body.toString('utf8').replace('<head>', '<head><base href="/local-first/">')
+        .replace('src="page.mjs"', 'src="/tests/local_first_settings_ui_browser.mjs"');
+    }
+    if (path === '/tests/local-first-budgets.html') {
+      body = body.toString('utf8').replace('<head>', '<head><base href="/local-first/">')
+        .replace('src="page.mjs"', 'src="/tests/local_first_budgets_ui_browser.mjs"');
+    }
+    if (path === '/tests/local-first-browse.html') {
+      body = body.toString('utf8').replace('<head>', '<head><base href="/local-first/">')
+        .replace('src="page.mjs"', 'src="/tests/local_first_browse_browser.mjs"');
     }
     if (path === '/tests/local-first-entry.html') {
       body = body.toString('utf8').replace('<head>', '<head><base href="/local-first/">')

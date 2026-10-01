@@ -1,12 +1,41 @@
 const DEFAULT_CATEGORIES = ['餐飲', '交通', '購物', '居住', '娛樂', '醫療', '其他'];
 export class ValidationError extends Error {}
 
+function pythonStrip(value) {
+  if (typeof value !== 'string') throw new ValidationError('請輸入有效名稱。');
+  return value.replace(/^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu, '');
+}
+export function categoryName(value) {
+  const name = pythonStrip(value);
+  if (!name || [...name].length > 20 || name === '總額' || /[\n\r]/u.test(name)) {
+    throw new ValidationError('分類名稱需 1～20 字，不能使用「總額」或換行。');
+  }
+  return name;
+}
+export function paymentName(value) {
+  const name = pythonStrip(value);
+  if (!name || [...name].length > 30 || /[\u0000-\u001f]/u.test(name)) {
+    throw new ValidationError('付款方式名稱需 1～30 字，不可包含換行或控制字元。');
+  }
+  return name;
+}
+
 export function cents(value) {
   if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value)) throw new ValidationError('金額資料格式錯誤。');
   return BigInt(value);
 }
 export const sumCents = records => records.reduce((sum, row) => sum + cents(row.cents), 0n);
 export const differenceCents = (a, b) => cents(a) - cents(b);
+
+export function budgetCents(value) {
+  if (!(typeof value === 'string' && /^[0-9]+$/.test(value)) &&
+      !(typeof value === 'number' && Number.isSafeInteger(value))) {
+    throw new ValidationError('預算金額需為正整數台幣。');
+  }
+  const whole = BigInt(value);
+  if (whole <= 0n || whole > 1000000000n) throw new ValidationError('預算金額需為正整數台幣且不超過十億元。');
+  return (whole * 100n).toString();
+}
 
 export function money(value) {
   if (!['string', 'number', 'bigint'].includes(typeof value)) throw new ValidationError('請輸入有效金額。');
