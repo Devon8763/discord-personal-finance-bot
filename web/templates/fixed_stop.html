@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}確認停用固定支出｜DiscordBOT Web{% endblock %}
+{% block panel_class %}panel expense-panel{% endblock %}
+{% block content %}
+  <h1>確認停用固定支出</h1>
+  <p>{{ rule.name }}｜每月 {{ rule.amount }} 元｜{{ rule.category }}｜預定 {{ rule.due_day }} 日｜開始 {{ rule.start_month }}</p>
+  {% if rule.pending %}<p>已安排 {{ rule.pending.month_title }} 的更改將不再執行：{{ rule.pending.name }}｜{{ rule.pending.amount }} 元｜{{ rule.pending.category }}｜{{ rule.pending.due_day }} 日。</p>{% endif %}
+  <p>確認時會先補記此規則已到期但尚未入帳的消費，再停用；未到期的消費不會提前入帳。補記與停用在同一交易完成，任一步失敗都不會留下部分結果。</p>
+  <p>停用後不再產生新的到期消費；歷史帳目與原規則保留，不提供重新啟用或實體刪除。這是自動記帳，非銀行扣款。</p>
+  <form method="post" action="/fixed-expenses/{{ rule.id }}/stop" class="entry-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_revision" value="{{ rule.revision }}">
+    <button type="submit" class="danger">確認停用</button>
+  </form>
+  <p><a href="/fixed-expenses">取消，返回管理頁</a></p>
+{% endblock %}

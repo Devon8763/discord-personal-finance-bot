@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}快速記帳｜DiscordBOT Web{% endblock %}
+{% block panel_class %}panel home-panel{% endblock %}
+{% block content %}
+  <h1>已登入</h1>
+  <nav class="home-links" aria-label="首頁工具">
+    <a class="button secondary" href="/search">搜尋帳目</a>
+    <a class="button secondary" href="/settings">設定</a>
+    <a class="button secondary" href="/compare">支出比較</a>
+  </nav>
+  <section aria-labelledby="quick-entry-heading">
+    <h2 id="quick-entry-heading">快速記帳</h2>
+    {% if saved %}
+      <p class="success" role="status">已儲存消費</p>
+    {% endif %}
+    {% if error %}
+      <p class="error" role="alert">{{ error }}</p>
+    {% endif %}
+    <form class="entry-form" method="post" action="/expenses">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <label for="amount">金額</label>
+      <input id="amount" name="amount" inputmode="decimal" value="{{ values.amount }}" required>
+
+      <label for="note">消費項目</label>
+      <input id="note" name="note" value="{{ values.note }}" placeholder="例如：午餐、全聯、Netflix" maxlength="200" required>
+
+      <label for="category">分類</label>
+      <select id="category" name="category" required>
+        {% if invalid_category %}
+          <option value="" disabled selected>原選擇無法使用</option>
+        {% endif %}
+        {% for category in categories %}
+          <option value="{{ category }}"{% if not invalid_category and category == values.category %} selected{% endif %}>{{ category }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="payment_source_id">付款方式</label>
+      <select id="payment_source_id" name="payment_source_id" required>
+        {% if invalid_payment_source %}
+          <option value="" disabled selected>原選擇無法使用</option>
+        {% endif %}
+        {% for source in payment_sources %}
+          <option value="{{ source.id }}"{% if not invalid_payment_source and source.id|string == values.payment_source_id %} selected{% endif %}>{{ source.name }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="spent_on">日期</label>
+      <input id="spent_on" name="spent_on" type="date" value="{{ values.spent_on }}" required>
+
+      <button type="submit">記錄消費</button>
+    </form>
+  </section>
+
+  {% if home_cards_error %}
+    <p class="error" role="alert">{{ home_cards_error }}</p>
+  {% else %}
+    <div class="home-cards">
+      <section class="home-card" id="home-budget" aria-labelledby="home-budget-heading">
+        <h2 id="home-budget-heading">本月預算</h2>
+        <p>{{ home_budget.month_title }}</p>
+        <p>已記錄支出：{{ home_budget.spent }} 元</p>
+        {% if home_budget.total_budget is not none %}
+          <p id="home-total-budget-label">總預算：{{ home_budget.total_budget }} 元</p>
+          <p id="home-total-budget-status">{% if home_budget.used_percent is not none %}已使用 {{ home_budget.used_percent }}%；{% else %}零元預算無法計算使用率；{% endif %}{{ home_budget.status_text }}</p>
+          {% if home_budget.used_percent is not none %}
+            <progress max="100" value="{{ home_budget.progress_value }}"
+                      aria-labelledby="home-total-budget-label" aria-describedby="home-total-budget-status">{{ home_budget.used_percent }}%</progress>
+          {% endif %}
+        {% else %}
+          <p>尚未設定總預算</p>
+        {% endif %}
+        {% if home_budget.category_budgets %}
+          <details class="category-budgets">
+            <summary>分類預算（{{ home_budget.category_budgets|length }} 項）</summary>
+            <ul>
+              {% for row in home_budget.category_budgets %}
+                <li data-budget-category="{{ row.name }}">
+                  <h3 id="home-category-budget-{{ loop.index }}-label">{{ row.name }}{% if not row.active %} <span class="budget-inactive">已停用</span>{% endif %}</h3>
+                  <p>預算 {{ row.budget }} 元；已花 {{ row.spent }} 元</p>
+                  <p id="home-category-budget-{{ loop.index }}-status">{% if row.used_percent is not none %}已使用 {{ row.used_percent }}%；{% else %}零元預算無法計算使用率；{% endif %}{{ row.status_text }}</p>
+                  {% if row.used_percent is not none %}
+                    <progress max="100" value="{{ row.progress_value }}"
+                              aria-labelledby="home-category-budget-{{ loop.index }}-label"
+                              aria-describedby="home-category-budget-{{ loop.index }}-status">{{ row.used_percent }}%</progress>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          </details>
+        {% else %}
+          <p>尚未設定分類預算</p>
+        {% endif %}
+        <a href="/settings">前往預算設定</a>
+        <p class="calendar-empty">僅依已記錄資料統計。</p>
+      </section>
+      <section class="home-card" id="home-calendar" aria-labelledby="home-calendar-heading">
+        <h2 id="home-calendar-heading">小月曆</h2>
+        <p>{{ home_calendar.month_title }}</p>
+        <div class="calendar-grid" aria-label="{{ home_calendar.month_title }}">
+          {% for weekday in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") %}
+            <span class="calendar-weekday">{{ weekday }}</span>
+          {% endfor %}
+          {% for _ in range(home_calendar.leading_blanks) %}
+            <span class="calendar-blank" aria-hidden="true"></span>
+          {% endfor %}
+          {% for item in home_calendar.calendar_days %}
+            {% if item.is_future %}
+              <span class="calendar-day" aria-disabled="true" aria-label="{{ item.date }}">
+            {% else %}
+              <a class="calendar-day" href="/calendar?month={{ home_calendar.month_text }}&amp;day={{ item.date }}"
+                 aria-label="{{ item.date }}{% if item.has_expense %}，當日有消費{% endif %}">
+            {% endif %}
+              <span>{{ item.day }}</span>
+              {% if item.has_expense %}
+                <span class="calendar-marker" aria-label="當日有消費">•</span>
+              {% endif %}
+            {% if item.is_future %}</span>{% else %}</a>{% endif %}
+          {% endfor %}
+        </div>
+        {% if not home_calendar.has_month_expenses %}
+          <p class="calendar-empty">本月尚無已記錄的消費。</p>
+        {% endif %}
+        <a class="calendar-back" href="/calendar">查看完整月曆</a>
+      </section>
+    </div>
+  {% endif %}
+
+  <form class="logout-form" method="post" action="/logout">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit">登出</button>
+  </form>
+{% endblock %}

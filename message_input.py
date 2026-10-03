@@ -2,6 +2,9 @@
 from copy import copy
 from datetime import datetime, timedelta, timezone
 
+BATCH_SPENDING_COMMANDS = {'!支出','!支出補登','!支出修改','!預算','!固定新增','!固定停用',
+                           '!分類新增','!分類刪除','!提醒設定','!提醒重設'}
+
 
 def command_lines(content):
     content = content.strip()
@@ -26,10 +29,23 @@ async def process_message(bot, message):
     except ValueError as error:
         await message.channel.send(str(error))
         return
-    for line in group_watch_lines(lines):
+    lines = group_watch_lines(lines)
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        end = index + 1
+        if (getattr(message, 'guild', None) is None and hasattr(bot, 'process_spending_batch')
+                and line.split()[0] in BATCH_SPENDING_COMMANDS):
+            while end < len(lines) and lines[end].split()[0] in BATCH_SPENDING_COMMANDS:
+                end += 1
+            if end-index > 1:
+                await bot.process_spending_batch(message, lines[index:end])
+                index = end
+                continue
         single = copy(message)
         single.content = line
         await bot.process_commands(single)
+        index += 1
 
 
 def group_watch_lines(lines):

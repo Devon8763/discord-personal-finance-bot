@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}無法完成操作｜DiscordBOT Web{% endblock %}
+{% block content %}
+  <h1>{{ error_heading|default("登入未完成") }}</h1>
+  <p>{{ message }}</p>
+  {% if reload_url %}<p><a href="{{ reload_url }}">重新載入帳目</a></p>{% endif %}
+  <a href="/">返回首頁</a>
+{% endblock %}

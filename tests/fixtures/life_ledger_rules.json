@@ -1,0 +1,66 @@
+{
+  "amounts": [
+    {"input": "12.34", "cents": 1234},
+    {"input": "0.29", "cents": 29},
+    {"input": "1000.00", "cents": 100000},
+    {"input": "1e-2", "cents": 1},
+    {"input": "1000000000", "cents": 100000000000},
+    {"input": "0", "invalid": true},
+    {"input": "-1", "invalid": true},
+    {"input": "0.001", "invalid": true},
+    {"input": "NaN", "invalid": true},
+    {"input": "1000000000.01", "invalid": true}
+  ],
+  "due_dates": [
+    {"month": "2024-02", "day": 31, "date": "2024-02-29"},
+    {"month": "2025-02", "day": 29, "date": "2025-02-28"},
+    {"month": "2026-04", "day": 31, "date": "2026-04-30"},
+    {"month": "2026-12", "day": null, "date": "2026-12-01"}
+  ],
+  "budgets": [
+    {"input": 1000, "cents": 100000},
+    {"input": "1000", "cents": 100000},
+    {"input": "1000.00", "invalid": true},
+    {"input": 1000.5, "invalid": true},
+    {"input": true, "invalid": true},
+    {"input": "１０００", "invalid": true},
+    {"input": 0, "invalid": true},
+    {"input": 1000000001, "invalid": true}
+  ],
+  "comparisons": [
+    {
+      "as_of": "2026-09-24",
+      "a": ["2026-09-01", "2026-09-03"],
+      "b": ["2026-08-31", "2026-09-01"],
+      "a_items": [{"spent_on": "2026-09-02", "category": "餐飲", "cents": 29}, {"spent_on": "2026-09-03", "category": "交通", "cents": 100}],
+      "b_items": [{"spent_on": "2026-08-31", "category": "餐飲", "cents": 100}],
+      "a_total": 129, "b_total": 100, "a_daily": [0, 29, 100], "b_daily": [100, 0],
+      "difference": 29, "change_percent": "29", "periods_differ": true
+    },
+    {
+      "as_of": "2024-02-29",
+      "a": ["2024-02-28", "2024-03-01"],
+      "b": ["2024-02-29", "2024-02-29"],
+      "a_items": [{"spent_on": "2024-02-29", "category": "餐飲", "cents": 1}],
+      "b_items": [{"spent_on": "2024-02-29", "category": "餐飲", "cents": 1}],
+      "a_total": 1, "b_total": 1, "a_daily": [0, 1], "b_daily": [1],
+      "difference": 0, "change_percent": "0", "periods_differ": true
+    },
+    {
+      "as_of": "2026-01-01",
+      "a": ["2025-12-31", "2026-01-01"],
+      "b": ["2026-01-01", "2026-01-01"],
+      "a_items": [], "b_items": [],
+      "a_total": 0, "b_total": 0, "a_daily": [0, 0], "b_daily": [0],
+      "difference": 0, "change_percent": null, "periods_differ": true
+    },
+    {
+      "as_of": "2026-09-24",
+      "a": ["2026-10-01", "2026-10-31"],
+      "b": ["2026-09-24", "2026-09-24"],
+      "a_items": [], "b_items": [{"spent_on": "2026-09-24", "category": "餐飲", "cents": 29}],
+      "a_total": null, "b_total": 29, "a_daily": [], "b_daily": [29],
+      "difference": null, "change_percent": null, "periods_differ": true
+    }
+  ]
+}

@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}設定｜DiscordBOT Web{% endblock %}
+{% block content %}
+  <h1>設定</h1>
+  <p>{{ month_title }}</p>
+  <div class="settings-stack">
+    <details class="settings-section" data-settings-section="budget"{% if open_section == 'budget' %} open{% endif %}>
+      <summary>預算設定</summary>
+      {% if saved and open_section == 'budget' %}
+        <p class="success" role="status">設定已更新</p>
+      {% endif %}
+      {% if error and open_section == 'budget' %}
+        <p class="error" role="alert">{{ error }}</p>
+      {% endif %}
+      {% if not has_budgets %}
+        <p class="settings-empty">本月尚未設定預算。</p>
+      {% endif %}
+
+      <h3>總預算</h3>
+      {% if total_budget is none %}
+        <p>尚未設定總預算</p>
+      {% else %}
+        <p>{{ total_budget }} 元</p>
+      {% endif %}
+      <form class="settings-form" method="post" action="/settings/budgets/set">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="category" value="總額">
+        <label for="total-budget-amount">金額</label>
+        <input id="total-budget-amount" name="amount" type="number" inputmode="numeric" step="1" min="1" value="{% if draft.section == 'budget' and draft.category == '總額' and draft.amount is defined %}{{ draft.amount }}{% else %}{{ total_budget or '' }}{% endif %}" required>
+        <button type="submit">儲存總預算</button>
+      </form>
+      {% if total_budget is not none %}
+        <form class="settings-form" method="post" action="/settings/budgets/clear">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="category" value="總額">
+          <button class="secondary" type="submit">清除總預算</button>
+        </form>
+      {% endif %}
+
+      <h3>分類預算</h3>
+      <ul class="setting-list">
+        {% for budget in budget_rows %}
+          <li class="setting-row" data-budget-category="{{ budget.name }}">
+            <div>
+              <strong>{{ budget.name }}</strong>
+              {% if not budget.active %}<span class="status-badge">已停用</span>{% endif %}
+              {% if budget.has_budget %}<span>{{ budget.display_amount }} 元</span>{% endif %}
+            </div>
+            {% if budget.active %}
+              <form class="settings-form" method="post" action="/settings/budgets/set">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="category" value="{{ budget.name }}">
+                <label for="budget-{{ loop.index }}">金額</label>
+                <input id="budget-{{ loop.index }}" name="amount" type="number" inputmode="numeric" step="1" min="1" value="{% if draft.section == 'budget' and draft.category == budget.name and draft.amount is defined %}{{ draft.amount }}{% else %}{{ budget.amount }}{% endif %}" required>
+                <button type="submit">儲存</button>
+              </form>
+            {% endif %}
+            {% if budget.has_budget %}
+              <form class="settings-form" method="post" action="/settings/budgets/clear">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="category" value="{{ budget.name }}">
+                <button class="secondary" type="submit">清除</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      {% if has_category_budgets %}
+        <form class="settings-form" method="post" action="/settings/budgets/use-category-sum">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit">設為分類預算加總</button>
+        </form>
+      {% endif %}
+    </details>
+
+    <details class="settings-section" data-settings-section="categories"{% if open_section == 'categories' %} open{% endif %}>
+      <summary>分類管理</summary>
+      {% if saved and open_section == 'categories' %}
+        <p class="success" role="status">設定已更新</p>
+      {% endif %}
+      {% if error and open_section == 'categories' %}
+        <p class="error" role="alert">{{ error }}</p>
+      {% endif %}
+      {% if not has_active_categories %}
+        <p class="settings-empty">目前沒有啟用分類。</p>
+      {% endif %}
+      <form class="settings-form" method="post" action="/settings/categories/add">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="new-category">分類名稱</label>
+        <input id="new-category" name="name" maxlength="20" value="{% if draft.section == 'categories' and draft.name is defined %}{{ draft.name }}{% endif %}" required>
+        <button type="submit">新增／重新啟用分類</button>
+      </form>
+      <ul class="setting-list">
+        {% for category in categories %}
+          <li class="setting-row" data-category-name="{{ category.name }}">
+            <div>
+              <strong>{{ category.name }}</strong>
+              <span class="status-badge">{{ '啟用' if category.active else '已停用' }}</span>
+            </div>
+            {% if category.active %}
+              <form class="settings-form" method="post" action="/settings/categories/rename">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="old_name" value="{{ category.name }}">
+                <label for="category-name-{{ loop.index }}">新名稱</label>
+                <input id="category-name-{{ loop.index }}" name="new_name" maxlength="20" value="{% if draft.section == 'categories' and draft.old_name == category.name and draft.new_name is defined %}{{ draft.new_name }}{% endif %}" required>
+                <button type="submit">更改</button>
+              </form>
+              <form class="settings-form" method="post" action="/settings/categories/disable">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="name" value="{{ category.name }}">
+                <button class="secondary" type="submit">停用</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+
+    <details class="settings-section" data-settings-section="payments"{% if open_section == 'payments' %} open{% endif %}>
+      <summary>付款方式管理</summary>
+      {% if saved and open_section == 'payments' %}
+        <p class="success" role="status">設定已更新</p>
+      {% endif %}
+      {% if error and open_section == 'payments' %}
+        <p class="error" role="alert">{{ error }}</p>
+      {% endif %}
+      <form class="settings-form" method="post" action="/settings/payment-sources/add">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="new-payment-source">付款方式名稱</label>
+        <input id="new-payment-source" name="name" maxlength="30" value="{% if draft.section == 'payments' and draft.payment_source_id is not defined and draft.name is defined %}{{ draft.name }}{% endif %}" required>
+        <button type="submit">新增付款方式</button>
+      </form>
+      {% if payment_sources %}
+        <ul class="setting-list">
+          {% for source in payment_sources %}
+            <li class="setting-row" data-source-name="{{ source.name }}">
+              <div>
+                <strong>{{ source.name }}</strong>
+                <span class="status-badge">{{ '啟用' if source.active else '已停用' }}</span>
+                {% if source.name in ('現金', '未指定') %}<span>保留</span>{% endif %}
+              </div>
+              {% if source.active and source.name not in ('現金', '未指定') %}
+                <form class="settings-form" method="post" action="/settings/payment-sources/rename">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="payment_source_id" value="{{ source.id }}">
+                  <label for="payment-name-{{ source.id }}">新名稱</label>
+                  <input id="payment-name-{{ source.id }}" name="name" maxlength="30" value="{% if draft.section == 'payments' and draft.payment_source_id == source.id|string and draft.name is defined %}{{ draft.name }}{% endif %}" required>
+                  <button type="submit">改名</button>
+                </form>
+                <form class="settings-form" method="post" action="/settings/payment-sources/disable">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="payment_source_id" value="{{ source.id }}">
+                  <button class="secondary" type="submit">停用</button>
+                </form>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="settings-empty">目前沒有可管理的付款方式。</p>
+      {% endif %}
+    </details>
+    <details class="settings-section" data-settings-section="fixed">
+      <summary>固定支出</summary>
+      <p>管理每月固定支出，依預定扣款日自動記帳；網站補記需在管理頁按下補記按鈕，非銀行扣款。</p>
+      <p><a class="button" href="/fixed-expenses">管理固定支出</a></p>
+    </details>
+    <details class="settings-section" data-settings-section="export">
+      <summary>資料匯出</summary>
+      <p>CSV 是未加密的分析用帳目資料，不是完整備份，也不能用來完整還原帳號。</p>
+      <a href="/export">CSV 匯出</a>
+    </details>
+  </div>
+
+  <a class="button secondary settings-back" href="/">返回首頁</a>
+{% endblock %}

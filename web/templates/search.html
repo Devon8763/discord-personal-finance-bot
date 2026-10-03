@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}搜尋帳目｜DiscordBOT Web{% endblock %}
+{% block content %}
+  <h1>搜尋帳目</h1>
+  {% if deleted %}<p class="success" role="status">已刪除帳目</p>{% endif %}
+  <p>請輸入消費項目關鍵字，或指定開始日期。</p>
+
+  {% if error %}
+    <p class="error" role="alert">{{ error }}</p>
+  {% endif %}
+
+  <form class="search-form" method="get" action="/search">
+    <label for="keyword">消費項目關鍵字</label>
+    <input id="keyword" name="keyword" type="search" value="{{ values.keyword }}">
+
+    <label for="start">開始日期</label>
+    <input id="start" name="start" type="date" value="{{ values.start }}">
+
+    <label for="end">結束日期</label>
+    <input id="end" name="end" type="date" value="{{ values.end }}">
+
+    <button type="submit">搜尋</button>
+  </form>
+
+  {% if searched %}
+    {% if results %}
+      <ul class="expense-list search-results">
+        {% for expense in results %}
+          <li>
+            <span>{{ expense.spent_on }}</span>
+            <strong>NT${{ expense.amount }}</strong>
+            <span>{{ expense.note }}</span>
+            <span>{{ expense.category }}</span>
+            <span>{{ expense.payment_source_name }}</span>
+            <a href="{{ expense.edit_url }}">更改</a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="calendar-empty">沒有符合條件的消費。</p>
+    {% endif %}
+  {% endif %}
+
+  <a class="calendar-back" href="/">返回快速記帳</a>
+{% endblock %}

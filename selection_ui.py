@@ -1,5 +1,6 @@
 """Owner-bound dropdowns with pagination, shared by forms."""
 import discord
+import life_ledger_service as life_service
 import spending as sp
 from privacy_rules import private_interaction
 
@@ -90,7 +91,7 @@ class NewCategory(SafeModal):
             name=self.name.value.strip()
             sp.set_category(str(i.user.id),name,True)
             total=[('整體預算（總額）','總額')] if any(v=='總額' for _,v in self.picker.items) else []
-            self.picker.items=total+[(n,n) for n in sp.category_names(str(i.user.id))]
+            self.picker.items=total+[(n,n) for n in life_service.get_categories(str(i.user.id))]
             self.picker.page=(len(self.picker.items)-1)//25
             self.picker.build()
             await i.response.edit_message(content=f'✅ 已新增 {name}，請從下拉選單選擇。',view=self.picker)
@@ -108,9 +109,9 @@ def month_items(user_id,future=False,recurring=False):
     for _ in range(36):
         months.add(cursor.strftime('%Y-%m'))
         cursor=(cursor-timedelta(days=1)).replace(day=1)
-    for row in sp.rows('SELECT DISTINCT substr(spent_on,1,7) AS month FROM expenses WHERE user_id=? UNION SELECT month FROM budgets WHERE user_id=?',(str(user_id),str(user_id))):
-        if future or row['month']<=current.strftime('%Y-%m'):
-            months.add(row['month'])
+    for month in life_service.get_recorded_months(user_id):
+        if future or month<=current.strftime('%Y-%m'):
+            months.add(month)
     if future:
         cursor=current
         for _ in range(12):
@@ -119,7 +120,7 @@ def month_items(user_id,future=False,recurring=False):
 
 
 async def choose_category(i,callback,budget=False):
-    names=sp.category_names(str(i.user.id))
+    names=life_service.get_categories(str(i.user.id))
     items=[(n,n) for n in names]
     if budget:
         items.insert(0,('整體預算（總額）','總額'))
@@ -137,7 +138,7 @@ class PaymentPicker(Picker):
         self.reload()
 
     def reload(self):
-        self.sources = sp.payment_sources(str(self.owner), self.manage)
+        self.sources = life_service.get_payment_sources(str(self.owner), include_inactive=self.manage)
         self.items = [(p['name'] + ('（停用）' if not p['active'] else ''), p['id']) for p in self.sources]
         self.page = min(self.page, max(0, (len(self.items)-1)//25))
         self.build()
@@ -160,7 +161,7 @@ class PaymentPicker(Picker):
                 self.add_item(button)
 
     async def manage_source(self, i, key):
-        source = next((p for p in sp.payment_sources(str(self.owner), True) if p['id'] == key), None)
+        source = next((p for p in life_service.get_payment_sources(str(self.owner), include_inactive=True) if p['id'] == key), None)
         if source is None:
             await i.response.send_message('付款來源已變動，請重新開啟。', ephemeral=True)
             return

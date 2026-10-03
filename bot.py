@@ -7,12 +7,9 @@ from discord.ext import commands
 from db import get_conn, init_db
 from scraper import get_price as fetch_price
 from portfolio import normalize_symbol, value_position
-from ai import analyze
-from ai_consent import ensure_consent
 import asyncio
 import time
 import sys
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 _price_cache = {}
@@ -46,7 +43,7 @@ class InvestmentBot(commands.Bot):
 
     async def setup_hook(self):
         from spending_commands import Spending
-        await self.add_cog(Spending(self, stock_snapshot, add_funds, InteractionContext))
+        await self.add_cog(Spending(self, InteractionContext))
         if getattr(self,'safety',None) is not None:
             from service_safety import monitor
             self.safety_task=asyncio.create_task(monitor(self,self.safety,self.admin_id))
@@ -102,13 +99,13 @@ class HelpView(discord.ui.View):
     def main_embed(self):
         embed = discord.Embed(
             title="📊 生活記帳與投資機器人",
-            description="📈 投資紀錄：持股、基金、觀察與投資摘要\n💰 生活記帳：支出、預算、固定負擔與趨勢\n兩邊獨立；自然語言查詢請輸入 `!問 問題`。",
+            description="📈 投資紀錄：持股、基金與觀察\n💰 生活記帳：支出、預算、固定負擔與趨勢\n兩邊資料獨立。",
             color=0x3498db
         )
 
         embed.add_field(
             name="📌 快速開始",
-            value="點「生活記帳」開啟生活看板，再按「＋記一筆消費」填表。\n投資摘要請至「投資紀錄 → AI」；文字指令仍可使用。",
+            value="點「生活記帳」開啟生活看板，再按「＋記一筆消費」填表。\n投資紀錄可查看持股與交易；文字指令仍可使用。",
             inline=False
         )
 
@@ -194,7 +191,7 @@ class HelpView(discord.ui.View):
     async def portfolio(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
             title="📊 投資組合",
-            description="""**`!portfolio`**\n**`!分析`** → 本地 AI 摘要
+            description="""**`!portfolio`**
 
 包含：
 ✔ 股票（股數）  
@@ -214,7 +211,7 @@ class HelpView(discord.ui.View):
 **`!history`** → 交易歷史
 **`!undo`** → 撤銷預覽  
 
-🔒 儲存你主動建立的記錄，不保存一般聊天或 AI 問答""",
+🔒 儲存你主動建立的記錄，不保存一般聊天""",
             color=0xe67e22
         )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -250,9 +247,6 @@ async def help(ctx, category=None):
     elif category == "portfolio":
         await ctx.send("📊 投資組合：!portfolio")
 
-    elif category == "ai":
-        await ctx.send("🤖 請至投資紀錄 → AI 使用摘要，或私訊 !分析／!analyze；僅分析自己的持倉。")
-
     else:
         await ctx.send("❌ 找不到分類")
 @bot.command()
@@ -284,7 +278,7 @@ async def guide(ctx):
         name="📌 功能",
         value="""• 股票 / ETF（股數管理）
 • 基金投資追蹤
-• 投資組合分析
+• 投資組合統計
 • 觀察清單""",
         inline=False
     )
@@ -647,49 +641,6 @@ class InteractionContext:
             self._response_started = True
         await self.interaction.followup.send(content, ephemeral=True, **kwargs)
 
-    @asynccontextmanager
-    async def typing(self):
-        yield
-
-
-_analysis_users = set()
-
-
-async def run_analysis(ctx):
-    user_id = str(ctx.author.id)
-    if user_id in _analysis_users:
-        await ctx.send('請等待上一個分析完成。')
-        return
-    _analysis_users.add(user_id)
-    try:
-        await build_analysis(ctx)
-    except Exception:
-        await ctx.send('❌ 分析暫時無法完成，請稍後再試。')
-    finally:
-        _analysis_users.discard(user_id)
-
-
-@bot.command(name='分析', aliases=['analyze'])
-async def analysis(ctx):
-    await run_analysis(ctx)
-
-
-async def build_analysis(ctx):
-    if not await ensure_consent(ctx): return
-    snapshot = await stock_snapshot(str(ctx.author.id))
-    await add_funds(ctx, snapshot)
-    await send_snapshot(ctx, snapshot)
-    if not snapshot['positions']:
-        return
-    await ctx.send('正在使用本地模型整理摘要，請稍候…')
-    try:
-        async with ctx.typing():
-            text = await analyze(snapshot)
-        await send_long(ctx, '🤖 AI 摘要（依上方估值資料）\n' + text)
-    except Exception:
-        await ctx.send('❌ 本地 AI 暫時無法使用。請確認 Ollama 已啟動，且已下載設定的模型；原有記帳與查價仍可使用。')
-
-
 @bot.event
 async def on_command_error(ctx, error):
     if getattr(ctx, 'spending_error_handled', False):
@@ -701,8 +652,6 @@ async def on_command_error(ctx, error):
         return
     if isinstance(error, commands.UserInputError):
         await ctx.send(f'❌ 參數格式錯誤。用法：!{ctx.command.qualified_name} {ctx.command.signature}')
-    elif isinstance(error, commands.MaxConcurrencyReached):
-        await ctx.send('請等待上一個分析完成。')
     else:
         print('Command failed:', type(error).__name__)
         await ctx.send('❌ 操作失敗，請稍後再試。')

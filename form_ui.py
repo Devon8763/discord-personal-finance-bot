@@ -1,5 +1,6 @@
 """Discord modal inputs with inline selects and draft-preserving overflow."""
 import discord
+import life_ledger_service as life_service
 import spending as sp
 from selection_ui import SafeModal, OwnedView, Picker, PaymentPicker, month_items
 
@@ -59,14 +60,14 @@ class InlineForm(SafeModal):
         return field
 
     def category(self,default=UNSET,budget=False,keep=False):
-        items=[(n,n) for n in sp.category_names(str(self.owner))]
+        items=[(n,n) for n in life_service.get_categories(str(self.owner))]
         if budget: items.insert(0,('整體預算（總額）','總額'))
         if keep and default is not UNSET and default not in [v for _,v in items]:
             items.insert(0,('保留原分類：'+default,default))
         return self.select('category','分類',items,default,'category')
 
     def payment(self,default=UNSET,original=None,keep=False):
-        items=[(p['name'],p['id']) for p in sp.payment_sources(str(self.owner))]
+        items=[(p['name'],p['id']) for p in life_service.get_payment_sources(str(self.owner))]
         if default is UNSET and original is None:
             default=next(v for n,v in items if n=='未指定')
         if original is not None:

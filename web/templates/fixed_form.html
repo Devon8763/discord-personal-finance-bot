@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{% if rule %}更改{% else %}新增{% endif %}固定支出｜DiscordBOT Web{% endblock %}
+{% block panel_class %}panel expense-panel{% endblock %}
+{% block content %}
+  <h1>{% if rule %}更改{% else %}新增{% endif %}固定支出</h1>
+  <p>依預定扣款日自動記帳，非銀行扣款；29～31 日遇短月以月底為準。</p>
+  {% if rule %}<p>更改從 {{ effective_title }} 生效；本月與以前月份保留原設定，已入帳帳目不回寫。{% if rule.pending %}表單顯示已安排的下月設定，再儲存會取代同月的待生效設定。{% endif %}</p>{% endif %}
+  {% if saved %}<p class="success" role="status">已儲存更改，{{ effective_title }} 生效。</p>{% endif %}
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  {% if can_submit %}
+    <form method="post" action="{% if rule %}/fixed-expenses/{{ rule.id }}/edit{% else %}/fixed-expenses/new{% endif %}" class="entry-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if rule %}<input type="hidden" name="expected_revision" value="{{ revision }}">{% endif %}
+      <label for="fixed-name">消費項目</label><input id="fixed-name" name="name" maxlength="100" value="{{ values.name }}" required>
+      <label for="fixed-amount">金額</label><input id="fixed-amount" name="amount" inputmode="decimal" maxlength="30" value="{{ values.amount }}" required>
+      <p>正數，最多兩位小數，不超過十億元；請勿輸入千分位。</p>
+      <label for="fixed-category">分類</label>
+      <select id="fixed-category" name="category" required>
+        {% if invalid_category %}<option value="" selected disabled>原選擇無法使用，請重新選擇</option>{% endif %}
+        {% if retained_category %}<option value="{{ retained_category }}"{% if values.category == retained_category %} selected{% endif %}>{{ retained_category }}（已停用，僅可保留）</option>{% endif %}
+        {% for category in categories %}<option value="{{ category }}"{% if values.category == category %} selected{% endif %}>{{ category }}</option>{% endfor %}
+      </select>
+      <label for="fixed-start">開始月份</label>
+      {% if rule %}<input id="fixed-start" type="month" value="{{ rule.start_month }}" readonly><p>建立後保留開始月份，避免影響歷史補記。</p>
+      {% else %}<select id="fixed-start" name="start_month" required>
+        {% if values.start_month not in months %}<option value="" selected disabled>原月份無法使用，請重新選擇</option>{% endif %}
+        {% for month in months %}<option value="{{ month }}"{% if values.start_month == month %} selected{% endif %}>{{ month }}</option>{% endfor %}
+      </select>{% endif %}
+      <label for="fixed-due">每月預定扣款日</label><input id="fixed-due" name="due_day" type="number" inputmode="numeric" min="1" max="31" step="1" value="{{ values.due_day }}" required>
+      <button type="submit">{% if rule %}儲存更改{% else %}新增固定支出{% endif %}</button>
+    </form>
+  {% else %}
+    <h2>尚未儲存的輸入</h2><p>{{ values.name }}｜{{ values.amount }} 元｜{{ values.category }}｜{{ values.due_day }} 日</p>
+    <p><a href="/fixed-expenses/{{ rule.id }}/edit">重新載入固定支出</a></p>
+  {% endif %}
+  <p><a href="/fixed-expenses">返回固定支出管理</a></p>
+{% endblock %}

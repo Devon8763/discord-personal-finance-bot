@@ -1,0 +1,17 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>設定離線資源驗證</title>
+<h1>設定離線資源驗證（只讀靜態快取）</h1><pre id="result">RUNNING</pre>
+<script type="module">
+try {
+  const names = await caches.keys();
+  if (!names.includes('local-first-offline-0.13.3-v1')) throw new Error('新版快取尚未啟用');
+  const cache = await caches.open('local-first-offline-0.13.3-v1');
+  for (const [path, content] of [['index.html','id="ledger-settings"'], ['rules.mjs','function categoryName'],
+    ['ledger.mjs','function updateBudget'], ['page.mjs','function renderBudgets'], ['browse.mjs','function monthBudget']]) {
+    const resource = await cache.match('/local-first/' + path);
+    if (!resource || !(await resource.text()).includes(content)) throw new Error('離線設定資源不完整');
+  }
+  const paths = (await cache.keys()).map(request => new URL(request.url));
+  if (paths.some(url => url.origin !== location.origin || url.search || !url.pathname.startsWith('/local-first/'))) throw new Error('快取超出靜態來源');
+  document.querySelector('#result').textContent = 'PASS：0.13.3-v1 分類、付款與預算資源已完整快取';
+} catch (error) { document.querySelector('#result').textContent = 'FAIL：' + error.message; }
+</script></html>

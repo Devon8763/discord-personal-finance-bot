@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}CSV 消費帳目匯出｜DiscordBOT Web{% endblock %}
+{% block panel_class %}panel expense-panel{% endblock %}
+{% block content %}
+  <h1>CSV 消費帳目匯出</h1>
+  <p>CSV 是可讀取的帳目資料，未加密，也不是能完整還原帳號的備份。請妥善保存，勿分享給不信任的人。</p>
+  <p>只包含日期範圍內的有效生活消費；不包含撤銷帳目、設定或投資。</p>
+  <p>為避免試算表將文字當作公式，危險文字前會加上單引號；只影響匯出副本，不修改原帳目。不同軟體可能顯示這個單引號。</p>
+  {% if error %}
+    <p class="error" role="alert">{{ error }}</p>
+  {% endif %}
+  {% if empty %}
+    <p role="status">此日期範圍沒有可匯出的消費帳目。</p>
+  {% endif %}
+  <form class="entry-form" method="post" action="/export/csv">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="export-start">開始日期</label>
+    <input id="export-start" name="start" type="date" value="{{ values.start }}" required>
+    <label for="export-end">結束日期</label>
+    <input id="export-end" name="end" type="date" value="{{ values.end }}" required>
+    <button type="submit">下載 CSV</button>
+  </form>
+  <a class="button secondary settings-back" href="/">返回首頁</a>
+{% endblock %}

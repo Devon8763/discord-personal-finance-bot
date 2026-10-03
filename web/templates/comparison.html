@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}支出比較｜DiscordBOT Web{% endblock %}
+{% block panel_class %}panel home-panel comparison-panel{% endblock %}
+{% block content %}
+  <h1>支出比較</h1>
+  <p>比較兩段所選期間的已記錄生活消費；分類與關鍵字共同套用兩段期間。不含預測，未記錄不代表沒有消費；此頁不會自動補記。</p>
+  {% if error %}
+    <p class="error" role="alert">{{ error }}</p>
+    <p>已輸入期間 A：{{ values.a_start }} ～ {{ values.a_end }}；期間 B：{{ values.b_start }} ～ {{ values.b_end }}。分類：{{ values.category or '全部' }}。</p>
+  {% endif %}
+  <form class="comparison-form" method="get" action="/compare">
+    <div class="comparison-form-ranges">
+      <fieldset class="entry-form"><legend>期間 A</legend>
+        <label for="a-start">A 開始日期</label><input id="a-start" name="a_start" type="date" value="{{ values.a_start }}" required>
+        <label for="a-end">A 結束日期</label><input id="a-end" name="a_end" type="date" value="{{ values.a_end }}" required>
+      </fieldset>
+      <fieldset class="entry-form"><legend>期間 B</legend>
+        <label for="b-start">B 開始日期</label><input id="b-start" name="b_start" type="date" value="{{ values.b_start }}" required>
+        <label for="b-end">B 結束日期</label><input id="b-end" name="b_end" type="date" value="{{ values.b_end }}" required>
+      </fieldset>
+    </div>
+    <div class="entry-form">
+      <label for="comparison-category">分類</label><select id="comparison-category" name="category">
+        {% if invalid_category %}<option value="" selected disabled>原分類無法使用，請重新選擇</option>{% endif %}
+        <option value=""{% if not values.category %} selected{% endif %}>全部</option>
+        {% for option in category_options %}<option value="{{ option.name }}"{% if values.category == option.name %} selected{% endif %}>{{ option.name }}{% if option.state == 'inactive' %}（已停用）{% elif option.state == 'historical' %}（歷史）{% endif %}</option>{% endfor %}
+      </select>
+      <label for="comparison-keyword">消費項目關鍵字（選填）</label><input id="comparison-keyword" name="keyword" type="search" maxlength="200" value="{{ values.keyword }}">
+      <p>日期使用 YYYY-MM-DD。可選未來、重疊或不等長期間，未來日期的消費不納入；關鍵字沿用搜尋的字面匹配。</p>
+      <button type="submit">比較支出</button>
+    </div>
+  </form>
+  {% if comparison %}
+    {% if comparison.periods_differ %}<p class="notice" role="note">期間長度或完整程度不同；請依所選範圍解讀總額差額。</p>{% endif %}
+    <div class="comparison-periods">
+      {% for name, period in [('A', comparison.a), ('B', comparison.b)] %}
+        <section id="comparison-summary-{{ name|lower }}" class="home-card" aria-label="期間 {{ name }} 統計">
+          <h2>期間 {{ name }}</h2>
+          <p>所選範圍：{{ period.start }} ～ {{ period.end }}</p>
+          {% if not period.started %}
+            <p>期間尚未開始</p><p>實際統計範圍：尚無</p><p>總支出：—｜消費筆數：—</p>
+          {% else %}
+            {% if period.unfinished %}<p>尚未結束／截至 {{ comparison.as_of }}</p>{% endif %}
+            <p>實際統計範圍：{{ period.actual_start }} ～ {{ period.actual_end }}</p>
+            <p><strong>總支出：{{ period.amount }} 元</strong>｜消費筆數：{{ period.record_count }} 筆</p>
+            <progress value="{{ period.total_cents }}" max="{{ comparison.scale_cents }}" aria-label="期間 {{ name }} 總支出 {{ period.amount }} 元；兩段期間採相同比例尺">{{ period.amount }} 元</progress>
+            {% if not period.record_count %}<p>沒有符合條件的消費</p>{% endif %}
+          {% endif %}
+        </section>
+      {% endfor %}
+    </div>
+    {% if comparison.difference_text %}
+      <p><strong>差額（A − B）：{{ comparison.difference_text }}</strong></p>
+      {% if comparison.percent_text is not none %}<p>以期間 B 為基準（{{ comparison.b.amount }} 元）：{{ comparison.percent_direction }} {{ comparison.percent_text }}%。</p>
+      {% else %}<p>無法計算百分比：期間 B 為 0 元。</p>{% endif %}
+    {% else %}<p>期間尚未開始，暫不計算差額或百分比。</p>{% endif %}
+    <p>正數表示 A 較多，負數表示 A 較少。</p>
+    <section class="comparison-charts" aria-label="支出圖表分析">
+      <p id="comparison-chart-status" role="status">圖表未載入時，仍可使用表單、文字摘要與下方數據表。</p>
+      <noscript><p>JavaScript 未啟用；請閱讀文字摘要、分類表及每日支出數據。</p></noscript>
+      <section class="home-card">
+        <h2>每日支出比較</h2>
+        <p id="comparison-line-note">以各期間開始日對齊，並非相同日曆日期。直線連接截至實際統計終點，不延長較短期間或填入未來日期。</p>
+        {% if comparison.a.started or comparison.b.started %}
+          <div class="comparison-chart-box" hidden><canvas id="comparison-line" role="img" aria-label="期間 A 與 B 每日支出比較" aria-describedby="comparison-line-note comparison-summary-a comparison-summary-b comparison-daily-data">每日數據見下方對照表。</canvas></div>
+        {% endif %}
+        {% for name, period in [('A', comparison.a), ('B', comparison.b)] %}{% if not period.started %}<p>期間 {{ name }}：期間尚未開始。</p>{% endif %}{% endfor %}
+        <details id="comparison-daily-data"><summary>查看每日數據</summary>
+          <p>期間 A：{{ comparison.a.start }} ～ {{ comparison.a.end }}<br>期間 B：{{ comparison.b.start }} ～ {{ comparison.b.end }}</p>
+          {% if comparison.daily_rows %}
+            <label id="comparison-daily-filter" hidden><input id="comparison-all-dates" type="checkbox"> 顯示所有日期</label>
+            <p id="comparison-daily-empty"{% if comparison.daily_rows|selectattr('nonzero')|list %} hidden{% endif %}>沒有符合的非零支出；仍可查看所有已發生日期。</p>
+            <noscript><p>JavaScript 未啟用；以下完整列出所有已有統計日期，包含零消費列。</p></noscript>
+            <div class="comparison-table"><table id="comparison-daily-table"><caption>每日支出對照</caption>
+              <thead><tr><th scope="col">日序</th><th scope="col">A 日期</th><th scope="col">A 支出</th><th scope="col">B 日期</th><th scope="col">B 支出</th></tr></thead>
+              <tbody>{% for row in comparison.daily_rows %}<tr data-daily-row data-nonzero="{{ 'true' if row.nonzero else 'false' }}">
+                <th scope="row">第 {{ row.day }} 天</th>
+                {% for point in [row.a, row.b] %}<td>{{ point.date[5:]|replace('-', '/') if point else '—' }}</td><td>{{ point.amount ~ ' 元' if point else '—' }}</td>{% endfor %}
+              </tr>{% endfor %}</tbody>
+            </table></div>
+            <p>— 表示尚未發生或不在該期間內。</p>
+          {% else %}<p>兩期間尚未開始，尚無每日統計。</p>{% endif %}
+        </details>
+      </section>
+      <section class="home-card"><h2>分類支出比較</h2>
+        <p id="comparison-category-note">期間 A 使用實色、B 使用淡色與外框；完整分類與金額見分類比較表，圖例不切換查詢資料。</p>
+        {% if comparison.categories %}<div class="comparison-chart-box comparison-category-box" hidden><canvas id="comparison-category-chart" role="img" aria-label="完整分類的 A 與 B 水平成組長條" aria-describedby="comparison-category-note comparison-category-table">完整分類數據見下方表格。</canvas></div>{% else %}<p>尚無可列出的分類消費。</p>{% endif %}
+      </section>
+      <section><h2>分類支出占比</h2>
+        <p>各期間以自己的符合條件總支出為分母，分類顏色與分類長條一致。</p>
+        {% if chart_data.keyword_filtered %}<p>占比僅針對符合關鍵字的消費。</p>{% endif %}
+        <div class="comparison-chart-pair">
+          {% for key, name, period in [('a', 'A', comparison.a), ('b', 'B', comparison.b)] %}
+            <section class="home-card"><h3>期間 {{ name }} 分類占比</h3>
+              {% if not period.started %}<p>期間尚未開始</p>
+              {% elif not period.total_cents %}<p>沒有符合條件的消費</p>
+              {% elif chart_data.single_category %}<p>目前只比較單一分類，占比固定為 100%</p>
+              {% else %}
+                <div class="comparison-chart-box" hidden><canvas id="comparison-pie-{{ key }}" role="img" aria-label="期間 {{ name }} 分類支出占比" aria-describedby="comparison-share-{{ key }} comparison-summary-{{ key }}">分類占比數據見下方文字。</canvas></div>
+                <details id="comparison-share-{{ key }}"><summary>查看期間 {{ name }} 占比數據</summary><ul>
+                  {% for index in chart_data.periods[loop.index0].share_order %}{% set row = chart_data.categories[index] %}<li>{{ row.name }}　{{ row[key+'_amount'] }} 元 · {{ row[key+'_percent'] }}%</li>{% endfor %}
+                </ul></details>
+              {% endif %}
+            </section>
+          {% endfor %}
+        </div>
+      </section>
+    </section>
+    {% if comparison.categories %}
+      <div id="comparison-category-table" class="comparison-table" role="region" aria-label="分類比較表" tabindex="0">
+        <table><caption>分類比較（符合相同篩選條件）</caption>
+          <thead><tr><th scope="col">分類</th><th scope="col">A 支出</th><th scope="col">B 支出</th><th scope="col">差額（A − B）</th></tr></thead>
+          <tbody>{% for row in comparison.categories %}<tr>
+            <th scope="row">{{ row.category }}</th>
+            <td>{% if row.a_amount is not none %}{{ row.a_amount }} 元{% else %}期間尚未開始{% endif %}</td>
+            <td>{% if row.b_amount is not none %}{{ row.b_amount }} 元{% else %}期間尚未開始{% endif %}</td>
+            <td>{{ row.difference_text or '期間尚未開始' }}</td>
+          </tr>{% endfor %}</tbody>
+        </table>
+      </div>
+    {% else %}<p>尚無可列出的分類消費。</p>{% endif %}
+  {% endif %}
+  <p><a href="/">返回首頁</a></p>
+  {% if comparison %}
+    <script id="comparison-chart-data" type="application/json">{{ chart_data|tojson }}</script>
+    <script defer src="{{ url_for('static', path='/vendor/chartjs-4.5.1/chart.umd.min.js') }}"></script>
+    <script defer src="{{ url_for('static', path='/comparison_charts.js') }}"></script>
+  {% endif %}
+{% endblock %}

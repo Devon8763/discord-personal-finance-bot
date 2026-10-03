@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}固定支出｜DiscordBOT Web{% endblock %}
+{% block panel_class %}panel expense-panel{% endblock %}
+{% block content %}
+  <h1>固定支出</h1>
+  <p>依預定扣款日自動記帳，非銀行扣款，不代表已確認實際扣款。短月以月底為準；沒有設定扣款日的舊規則維持每月 1 日。</p>
+  {% if saved %}<p class="success" role="status">固定支出已新增；若本月已到期，請按「補記已到期消費」。</p>{% endif %}
+  {% if stopped %}<p class="success" role="status">固定支出已停用，歷史帳目保留。</p>{% endif %}
+  {% if synced %}<p class="success" role="status">補記已完成；只有已到期且尚未入帳的固定消費會新增，沒有待補記項目時不會新增。</p>{% endif %}
+  <p><a class="button" href="/fixed-expenses/new">新增固定支出</a></p>
+  <form method="post" action="/fixed-expenses/sync" class="entry-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">補記已到期消費</button>
+  </form>
+  <p>網站未開啟而錯過日期，可按此補記；日期仍為原定扣款日。瀏覽或重新整理頁面不會入帳；此按鈕只補記固定來源。</p>
+  {% for rule in rules %}
+    <section class="home-card">
+      <h2>{{ rule.name }} <span class="status-badge">{% if rule.active %}啟用中{% else %}已停用{% endif %}</span></h2>
+      <p>每月 {{ rule.amount }} 元｜{{ rule.category }}｜預定 {{ rule.due_day }} 日｜開始 {{ rule.start_month }}</p>
+      {% if rule.pending %}
+        <p>已安排 {{ rule.pending.month_title }} 生效：{{ rule.pending.name }}｜{{ rule.pending.amount }} 元｜{{ rule.pending.category }}｜{{ rule.pending.due_day }} 日{% if not rule.active %}（已停用，不再執行）{% endif %}</p>
+      {% endif %}
+      {% if rule.active %}
+        <p><a href="/fixed-expenses/{{ rule.id }}/edit">更改</a> · <a href="/fixed-expenses/{{ rule.id }}/stop?expected_revision={{ rule.revision }}">停用</a></p>
+      {% endif %}
+    </section>
+  {% else %}<p>尚無固定支出。</p>{% endfor %}
+  <p><a href="/settings">返回設定</a> · <a href="/">返回首頁</a></p>
+{% endblock %}

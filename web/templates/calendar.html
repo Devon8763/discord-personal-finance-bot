@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}月曆｜DiscordBOT Web{% endblock %}
+{% block content %}
+  <div class="calendar-page">
+    {% if deleted %}<p class="success" role="status">已刪除帳目</p>{% endif %}
+    <nav class="calendar-nav" aria-label="月份導覽">
+      <a href="/calendar?month={{ previous_month }}" aria-label="上個月" title="上個月">←</a>
+      <h1 class="calendar-nav-month">{{ month_title }}</h1>
+      {% if can_go_next %}
+        <a href="/calendar?month={{ next_month }}" aria-label="下個月" title="下個月">→</a>
+      {% else %}
+        <span aria-disabled="true" aria-label="下個月" title="下個月">→</span>
+      {% endif %}
+    </nav>
+    {% if month_text != current_month %}
+      <a class="calendar-current-month" href="/calendar?month={{ current_month }}">回到本月</a>
+    {% endif %}
+
+    <div class="calendar-grid" aria-label="{{ month_title }}">
+      {% for weekday in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") %}
+        <span class="calendar-weekday">{{ weekday }}</span>
+      {% endfor %}
+      {% for _ in range(leading_blanks) %}
+        <span class="calendar-blank" aria-hidden="true"></span>
+      {% endfor %}
+      {% for item in calendar_days %}
+        {% if item.is_future %}
+          <span class="calendar-day" aria-disabled="true" aria-label="{{ item.date }}">
+        {% else %}
+        <a class="calendar-day{% if selected_day and item.date == selected_day.isoformat() %} selected{% endif %}"
+           href="/calendar?month={{ month_text }}&amp;day={{ item.date }}"
+           aria-label="{{ item.date }}{% if item.has_expense %}，當日有消費{% endif %}">
+        {% endif %}
+          <span>{{ item.day }}</span>
+          {% if item.has_expense %}
+            <span class="calendar-marker" aria-label="當日有消費">•</span>
+          {% endif %}
+        {% if item.is_future %}</span>{% else %}</a>{% endif %}
+      {% endfor %}
+    </div>
+
+    {% if not has_month_expenses %}
+      <p class="calendar-empty">本月尚無已記錄的消費。</p>
+    {% endif %}
+
+    {% if selected_day %}
+      <section class="day-details" aria-labelledby="selected-day-title">
+        <h2 id="selected-day-title">{{ selected_day_text }}</h2>
+        <p class="day-total">當日消費合計：NT${{ daily_total }}</p>
+        {% if selected_expenses %}
+          <ul class="expense-list">
+            {% for expense in selected_expenses %}
+              <li>
+                <strong>NT${{ expense.amount }}</strong>
+                <span>{{ expense.note }}</span>
+                <span>{{ expense.category }}</span>
+                <span>{{ expense.payment_source_name }}</span>
+                <a href="{{ expense.edit_url }}">更改</a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="calendar-empty">此日期沒有已記錄的消費。</p>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    <a class="calendar-back" href="/">返回快速記帳</a>
+  </div>
+{% endblock %}

@@ -11,7 +11,7 @@ import sqlite3
 import uuid
 
 RETENTION=timedelta(days=7)
-LIFE_TABLES=('expenses','expense_actions','budgets','recurring_expenses','spending_notices',
+LIFE_TABLES=('expenses','expense_actions','budgets','recurring_expense_versions','recurring_expenses','spending_notices',
              'spending_users','spending_categories','spending_settings','payment_sources',
              'spending_shortcuts','spending_onboarding')
 
@@ -226,9 +226,12 @@ class Safety:
             try:
                 with closing(sqlite3.connect(self.path(name).as_uri()+'?mode=ro',uri=True)) as source,closing(sqlite3.connect(candidate)) as target:
                     source.backup(target)
+                    has_versions = target.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='recurring_expense_versions'").fetchone()
                     for mark in self.deletions():
                         if mark['deleted_at']>=metadata['created']:
-                            for table in LIFE_TABLES:target.execute(f'DELETE FROM {table} WHERE user_id=?',(mark['user_id'],))
+                            for table in LIFE_TABLES:
+                                if table != 'recurring_expense_versions' or has_versions:
+                                    target.execute(f'DELETE FROM {table} WHERE user_id=?',(mark['user_id'],))
                     target.commit()
                 self.verify(candidate,writable=True)
                 # Checkpoint only the current DB, then close all connections before replacement.

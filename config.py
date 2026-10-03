@@ -3,6 +3,14 @@ import os
 from pathlib import Path
 
 
+def load_admin_id():
+    value=os.getenv('ADMIN_DISCORD_ID','').strip()
+    if not value:return None
+    if not value.isascii() or not value.isdecimal() or not 0<int(value)<2**64:
+        raise ValueError('ADMIN_DISCORD_ID需為單一Discord使用者數字ID。')
+    return int(value)
+
+
 def load_token():
     token = os.getenv('DISCORD_TOKEN', '').strip()
     if not token:
