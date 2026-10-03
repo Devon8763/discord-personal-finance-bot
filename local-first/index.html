@@ -10,7 +10,7 @@
 <body>
 <main>
   <h1>瀏覽器本機記帳驗證</h1>
-  <p class="warning">僅供合成資料測試，請勿輸入真實帳目。備份 JSON 未加密，下載後請自行妥善保管。</p>
+  <p class="warning">僅供合成資料測試，請勿輸入真實帳目。本機帳本未加密；備份可選密碼保護，請妥善保管檔案與密碼。</p>
   <p id="status" role="status" aria-live="polite">正在開啟瀏覽器本機測試帳本……</p>
   <p id="offline-status" role="status" aria-live="polite">離線重新開啟尚未就緒；首次使用請保持預覽服務開啟。</p>
   <p>瀏覽器可能清除離線快取或本機帳本；可離線使用不等於資料永久安全，請下載並妥善保存備份。</p>
@@ -19,7 +19,16 @@
   <section id="welcome" aria-labelledby="welcome-title" hidden>
     <h2 id="welcome-title">建立本機測試帳本</h2>
     <div class="buttons"><button id="start-ledger" type="button">開始記帳</button><button id="choose-restore" type="button">從備份還原</button></div>
-    <input id="restore-file" type="file" accept=".json,application/json" hidden>
+    <input id="restore-file" type="file" accept=".json,.llbk,application/json,application/octet-stream" hidden>
+    <div id="decrypt-panel" hidden>
+      <h3>解密備份</h3>
+      <p>密碼只用來解密此備份；忘記密碼無法取回。驗證完成並確認後才會還原。</p>
+      <form id="decrypt-form" novalidate autocomplete="off">
+        <label>備份密碼<input id="restore-password" type="password" maxlength="1024" autocomplete="off"></label>
+        <p id="restore-password-error" role="alert"></p>
+        <div class="buttons"><button id="decrypt-backup" type="submit">解密並驗證</button><button id="cancel-decrypt" type="button">取消解密</button></div>
+      </form>
+    </div>
     <div id="restore-review" hidden>
       <h3 id="restore-title" tabindex="-1">確認還原至空白帳本</h3>
       <p>僅能還原到完全空白的本機測試帳本。請確認下列資料筆數：</p>
@@ -28,6 +37,7 @@
     </div>
   </section>
   <div id="ledger-page" hidden>
+  <p><a href="#expense-comparison">支出比較</a></p>
   <section aria-labelledby="form-title">
     <h2 id="form-title">記錄消費</h2>
     <form id="expense-form">
@@ -39,6 +49,7 @@
           <label>分類<select name="category" required></select></label>
           <label>付款方式<select name="payment_source_id"></select></label>
         </div>
+        <p id="expense-date-note" hidden>自動來源消費的原入帳日期不可更改；本次操作只影響這一筆消費。</p>
         <div class="buttons"><button type="submit" id="save">儲存消費</button><button type="button" id="cancel-edit" hidden>取消更改</button></div>
       </fieldset>
     </form>
@@ -54,7 +65,30 @@
   </section>
   <section aria-label="本機帳本設定">
     <details id="ledger-settings">
-      <summary>本月預算、分類與付款方式設定</summary>
+      <summary>本月預算、分類、付款方式與定期支出設定</summary>
+      <details id="fixed-settings">
+        <summary>固定支出／訂閱／分期</summary>
+        <p>每月扣款；訂閱持續到停用，分期到總期數為止。更改從下月生效；訂閱／分期只可更改金額及分類，名稱、扣款日、類型及總期數不變。開始月份建立後不可更改，短月扣款日取月底。</p>
+        <p>只有按下補記或確認停用才入帳。這是記帳，不代表銀行已扣款；開頁、搜尋、月曆及匯出不會補記。</p>
+        <form id="fixed-form" novalidate>
+          <fieldset id="fixed-fields">
+            <h3 id="fixed-form-title">新增固定支出</h3>
+            <div class="form-grid">
+              <label>支出類型<select name="kind"><option value="固定">固定支出</option><option value="訂閱">訂閱</option><option value="分期">分期</option></select></label>
+              <label>消費項目<input name="name" type="text" autocomplete="off"></label>
+              <label>金額（元）<input name="amount" type="text" inputmode="decimal" autocomplete="off"></label>
+              <label>分類<select name="category"></select></label>
+              <label>開始月份<select name="start_month"></select></label>
+              <label>每月扣款日<input name="due_day" type="number" min="1" max="31" step="1" value="1"></label>
+              <div id="installment-fields" hidden><label>總期數（1～600）<input name="periods" type="number" min="1" max="600" step="1" disabled></label></div>
+            </div>
+            <div class="buttons"><button id="save-fixed" type="submit">新增固定支出</button><button id="cancel-fixed-edit" type="button" hidden>取消更改固定支出</button></div>
+          </fieldset>
+        </form>
+        <p id="fixed-error" role="alert"></p>
+        <button id="fixed-sync" type="button">補記已到期消費</button>
+        <ul id="fixed-list"></ul><p id="fixed-empty">尚無固定支出、訂閱或分期。</p>
+      </details>
       <details id="budget-settings">
         <summary>本月預算設定</summary>
         <p>新預算限正整數台幣，最多十億元。總預算須至少等於所有分類預算加總（含停用分類）；未設定總預算時可單獨設定分類預算。</p>
@@ -115,13 +149,77 @@
     </div>
     <p id="calendar-error" role="alert"></p>
   </section>
+  <section id="expense-comparison" aria-labelledby="comparison-title">
+    <h2 id="comparison-title">支出比較</h2>
+    <form id="comparison-form" novalidate>
+      <div class="form-grid">
+        <label>期間 A 開始日期<input name="a_start" type="date" required></label>
+        <label>期間 A 結束日期<input name="a_end" type="date" required></label>
+        <label>期間 B 開始日期<input name="b_start" type="date" required></label>
+        <label>期間 B 結束日期<input name="b_end" type="date" required></label>
+        <label>比較分類<select name="category" id="comparison-category"><option value="">全部分類</option></select></label>
+        <label>比較消費項目關鍵字（選填，最多 200 字）<input name="keyword" type="search" autocomplete="off"></label>
+      </div>
+      <p>日期包含兩端；兩段套用相同條件，只統計截至台灣今天已入帳的有效生活消費，不補記或預測。</p>
+      <button type="submit">比較支出</button>
+    </form>
+    <p id="comparison-error" role="alert"></p>
+    <div id="comparison-results" aria-live="polite"></div>
+  </section>
   <section id="data-management" aria-labelledby="data-management-title" hidden>
     <h2 id="data-management-title">資料管理</h2>
+    <p id="storage-status" role="status">正在查詢本來源的瀏覽器儲存狀態……</p>
+    <button id="request-persistence" type="button" disabled>申請持久保存</button>
+    <p>本機帳本保存在此瀏覽器來源；獲准持久保存仍可能遺失，請手動加密備份並自行確認檔案存在。</p>
     <button id="download-backup" type="button">下載完整備份</button>
-    <p>備份 JSON 未加密；請在瀏覽器下載後確認檔案並自行妥善保管。</p>
+    <p>請在重要操作後手動備份。發出下載要求不代表檔案已保存，請確認檔案存在，並妥善保管備份與密碼。</p>
+    <details id="csv-export">
+      <summary>CSV 支出匯出</summary>
+      <p class="warning">CSV 未加密、不是完整備份、不能用來還原帳本。請妥善保管下載的帳目資料。</p>
+      <p>日期包含開始與結束當日，只匯出截至台灣今天已入帳的有效生活消費，包含合法的手動、固定、訂閱及分期來源。</p>
+      <form id="csv-form" novalidate>
+        <fieldset id="csv-inputs">
+          <div class="form-grid">
+            <label>匯出開始日期<input name="start" type="date" required></label>
+            <label>匯出結束日期<input name="end" type="date" required></label>
+          </div>
+          <div class="buttons"><button type="submit">下載 CSV</button></div>
+        </fieldset>
+        <p id="csv-error" role="alert"></p>
+        <p id="csv-status" role="status" aria-live="polite"></p>
+      </form>
+      <p>為防止試算表將文字當成公式，危險開頭的文字會加上單引號；只改匯出副本，部分軟體可能顯示該符號。CSV 不提供匯入。</p>
+    </details>
+    <div id="export-panel" hidden>
+      <h3>完整備份方式</h3>
+      <p>備份密碼不會加密瀏覽器帳本；本頁不保存密碼或金鑰，忘記密碼無法取回。Python Web 尚未被取代。</p>
+      <form id="export-form" novalidate autocomplete="off">
+        <fieldset id="export-inputs">
+          <label>備份方式<select id="export-mode"><option value="encrypted" selected>加密備份（建議）</option><option value="plain">不加密備份</option></select></label>
+          <div id="export-password-fields" class="form-grid">
+            <label>設定備份密碼<input id="export-password" type="password" maxlength="1024" autocomplete="off"></label>
+            <label>確認備份密碼<input id="export-confirm-password" type="password" maxlength="1024" autocomplete="off"></label>
+          </div>
+          <p>新密碼至少 12 個字元、最多 1024 UTF-8 bytes，建議使用較長且不重複的密碼。</p>
+          <div id="export-plain-risk" hidden>
+            <p class="warning">不加密的 JSON 包含完整帳目與歷史；任何取得檔案的人都能讀取。請確認風險並自行保護檔案。</p>
+            <label class="backup-risk"><input id="export-risk" type="checkbox">我了解此備份未加密，仍要下載</label>
+          </div>
+        </fieldset>
+        <p id="export-error" role="alert"></p>
+        <div class="buttons"><button id="confirm-export" type="submit">產生加密備份</button><button id="cancel-export" type="button">取消備份</button></div>
+      </form>
+    </div>
   </section>
   </div>
 </main>
+<dialog id="fixed-stop-dialog" aria-labelledby="fixed-stop-title">
+  <h2 id="fixed-stop-title">確認停用固定支出</h2>
+  <p id="fixed-stop-summary"></p>
+  <p>確認後會先補記此規則已到期的缺漏，再停用。規則、歷史版本與已入帳消費保留；不再執行後續月份。</p>
+  <p id="fixed-stop-error" role="alert"></p>
+  <div class="buttons"><button id="confirm-fixed-stop" type="button">確認停用固定支出</button><button id="cancel-fixed-stop" type="button">取消</button></div>
+</dialog>
 <dialog id="settings-dialog" aria-labelledby="settings-title">
   <h2 id="settings-title"></h2>
   <p id="settings-summary"></p>

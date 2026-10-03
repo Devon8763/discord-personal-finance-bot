@@ -79,12 +79,23 @@ try {
     ok((await count(db)) === 0 && document.querySelector('#restore-review').hidden, 'Cancel file selection wrote data');
     lines.push('選檔取消無寫入');
 
-    if (test === 'start') {
+    if (test === 'start' || test === 'start-ui-failure') {
+      const replace = Element.prototype.replaceChildren;
+      if (test === 'start-ui-failure') Element.prototype.replaceChildren = function (...args) {
+        if (this.id === 'category-list') { Element.prototype.replaceChildren = replace; throw new Error('PRIVATE-UI-DETAIL'); }
+        return replace.apply(this, args);
+      };
       document.querySelector('#start-ledger').click();
       await waitFor(() => !ledger.hidden);
+      if (test === 'start-ui-failure') {
+        await waitFor(() => error.textContent.length > 0);
+        ok(error.textContent.includes('已儲存') && !error.textContent.includes('資料沒有變更') && !error.textContent.includes('PRIVATE-UI-DETAIL'), 'Initialized ledger falsely reported unchanged');
+        ok(document.querySelector('#fields').disabled, 'Initialization UI failure permits writes');
+        lines.push('建立交易完成後畫面故障：如實提示重新載入，保留完整備份入口');
+      }
       const state = await readLedger(db);
       ok((await count(db)) > 0 && state.expenses.length === 0 && state.payment_sources.length === 2, 'Start did not atomically create defaults');
-      ok(welcome.hidden && !management.hidden && !document.querySelector('#fields').disabled, 'Start did not enter original ledger');
+      ok(welcome.hidden && !management.hidden && document.querySelector('#fields').disabled === (test === 'start-ui-failure'), 'Start did not enter original ledger');
       lines.push('明確開始才建立，原記帳頁與下載入口可用');
     } else {
       const secret = 'DO-NOT-ECHO-SYNTHETIC-SECRET';
@@ -148,6 +159,10 @@ try {
     let link;
     HTMLAnchorElement.prototype.click = function () { link = { href: this.href, download: this.download }; };
     document.querySelector('#download-backup').click();
+    document.querySelector('#export-mode').value='plain';
+    document.querySelector('#export-mode').dispatchEvent(new Event('change'));
+    document.querySelector('#export-risk').checked=true;
+    document.querySelector('#export-form').requestSubmit();
     await waitFor(() => status.textContent.includes('已要求瀏覽器下載'));
     HTMLAnchorElement.prototype.click = click;
     ok(link?.download === 'life-ledger-backup-v1.json', 'Download filename must be fixed');

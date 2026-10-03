@@ -1,5 +1,5 @@
 // Bump this name whenever any cached asset or this worker changes.
-const CACHE = 'local-first-offline-0.13.3-v1';
+const CACHE = 'local-first-offline-0.13.12-v2';
 const ASSETS = [
   '/local-first/',
   '/local-first/index.html',
@@ -9,7 +9,11 @@ const ASSETS = [
   '/local-first/idb.mjs',
   '/local-first/rules.mjs',
   '/local-first/browse.mjs',
+  '/local-first/csv.mjs',
+  '/local-first/comparison.mjs',
+  '/local-first/vendor/chartjs-4.5.1/chart.umd.min.js',
   '/local-first/backup.mjs',
+  '/local-first/backup-crypto.mjs',
   '/local-first/vendor/lossless-json-4.3.1/lossless-json.js',
 ];
 const allowed = new Set(ASSETS);

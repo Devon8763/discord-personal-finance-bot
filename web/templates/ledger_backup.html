@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}完整生活帳本搬移{% endblock %}
+{% block content %}
+  <h1>完整帳本搬移</h1>
+  <p>下載本人完整生活帳本，供 local-first 的完全空白帳本還原。這不是 CSV，也不包含收入或投資。</p>
+  <p>目前僅供合成資料驗證，不宜直接取代正式 Python Web 帳本。加密備份不會加密 IndexedDB。</p>
+  <p>密碼只在此瀏覽器加密備份，不會送到伺服器；忘記密碼無法取回。請妥善保管密碼與備份。</p>
+  <form id="ledger-backup-form" class="entry-form" autocomplete="off" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="backup-password">設定備份密碼</label>
+    <input id="backup-password" type="password" maxlength="1024" autocomplete="off">
+    <label for="backup-confirmation">確認備份密碼</label>
+    <input id="backup-confirmation" type="password" maxlength="1024" autocomplete="off">
+    <p>至少 12 個字元，最多 1024 UTF-8 bytes；只提供加密下載。</p>
+    <button id="backup-download" type="submit" disabled>產生加密完整備份</button>
+    <button id="backup-cancel" type="button" disabled>取消</button>
+    <p id="backup-error" role="alert"></p>
+    <p id="backup-status" role="status" aria-live="polite"></p>
+  </form>
+  <noscript><p>需要瀏覽器 JavaScript 與 Web Crypto 才能加密下載；不會改用明文下載。</p></noscript>
+  <p>下載要求不代表已保存。請確認檔案存在，並在獨立空白合成帳本測試還原；不要清除原帳本。</p>
+  <a href="/settings">返回設定</a>
+  <script type="module" src="/export/ledger/modules/download.mjs"></script>
+{% endblock %}

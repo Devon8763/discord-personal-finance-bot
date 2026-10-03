@@ -72,3 +72,22 @@ test('Taiwan calendar boundary is owned by entry, not pure rules', async () => {
   const entry=readFileSync(new URL('../local-first/ledger.mjs',import.meta.url),'utf8');
   assert.match(entry,/timeZone:\s*['"]Asia\/Taipei['"]/);
 });
+
+test('automatic expense dates cannot move; manual dates and four-source historical snapshots remain editable', async () => {
+  const r = await rules(), s = state(); s.categories = [{name:'餐飲',active:0}];
+  for (const source of ['manual','固定','訂閱','分期']) {
+    const previous = {source,spent_on:'2026-09-23',category:'餐飲',payment_source_id:'p_other',payment_source_name:'歷史卡'};
+    const form = {...input(),spent_on:previous.spent_on,payment_source_id:'',amount:'.29'};
+    assert.equal(r.validateInput(form,s,'2026-09-24',previous).cents,'29');
+    assert.equal(r.validateInput(form,s,'2026-09-24',previous).payment_source_name,'歷史卡');
+    if (source === 'manual') assert.equal(r.validateInput({...form,spent_on:'2026-09-24'},s,'2026-09-24',previous).spent_on,'2026-09-24');
+    else for (const spent_on of ['2026-08-23','2026-09-24']) assert.throws(() => r.validateInput({...form,spent_on},s,'2026-09-24',previous), /日期不可更改/);
+  }
+});
+
+test('imported original category without an override can be retained but never newly selected', async () => {
+  const r=await rules(),s=state(),previous={source:'固定',spent_on:input().spent_on,category:'歷史無override',payment_source_id:null,payment_source_name:'歷史付款'};
+  const form={...input(),category:previous.category,payment_source_id:''};
+  assert.equal(r.validateInput(form,s,'2026-09-24',previous).category,previous.category);
+  assert.throws(()=>r.validateInput({...input(),category:previous.category},s,'2026-09-24'));
+});

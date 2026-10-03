@@ -391,7 +391,14 @@ def recurring_expenses(user_id):
         conn.row_factory = sqlite3.Row
         month = today().strftime('%Y-%m')
         rules = conn.execute('SELECT * FROM recurring_expenses WHERE user_id=? ORDER BY active DESC,id DESC', (user_id,)).fetchall()
-        return [_fixed_view(conn, rule, month) if rule['kind'] == '固定' else dict(rule) for rule in rules]
+        result = []
+        for rule in rules:
+            if rule['kind'] == '固定':
+                result.append(_fixed_view(conn, rule, month))
+            else:
+                current = _recurring_version(conn, rule, month)
+                result.append(dict(rule, cents=current['cents'], category=current['category']))
+        return result
 
 
 def list_fixed_recurring(user_id):
@@ -412,14 +419,13 @@ def _fixed_rule(conn, user_id, key, expected_revision=None, *, active=False):
 
 
 def _recurring_version(conn, rule, month):
-    if rule['kind'] == '固定':
-        version = conn.execute(
-            'SELECT * FROM recurring_expense_versions WHERE recurring_id=? AND user_id=? '
-            'AND effective_month<=? ORDER BY effective_month DESC LIMIT 1',
-            (rule['id'], rule['user_id'], month),
-        ).fetchone()
-        if version is not None:
-            return dict(version)
+    version = conn.execute(
+        'SELECT * FROM recurring_expense_versions WHERE recurring_id=? AND user_id=? '
+        'AND effective_month<=? ORDER BY effective_month DESC LIMIT 1',
+        (rule['id'], rule['user_id'], month),
+    ).fetchone()
+    if version is not None:
+        return dict(version)
     return dict(rule)
 
 

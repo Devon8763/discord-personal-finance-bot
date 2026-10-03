@@ -63,7 +63,9 @@ try {
     const large = state.expenses.find(row => row.revision === MAX_INTEGER);
     await rejects(() => voidExpense(db, large.id, large.revision), 'limit');
     ok((await readLedger(db)).actions.length === state.actions.length, 'Abort/limit no actions');
-    await rejects(() => voidExpense(db, state.expenses.find(row => row.source === '訂閱').id, 0), 'unavailable');
+    const automatic = state.expenses.find(row => row.source === '訂閱');
+    state = await voidExpense(db, automatic.id, automatic.revision);
+    ok(state.expenses.find(row => row.id === automatic.id).voided === 1, 'Restored automatic expense cannot soft delete');
     lines.push('大 revision 更改、快照、舊 revision 拒絕、遞增上限及中途 rollback');
     await reset(db);
     await rejects(() => restorePortableBackup(fault(db, 'add'), payload));

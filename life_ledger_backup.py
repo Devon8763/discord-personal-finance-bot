@@ -193,11 +193,13 @@ def _validate(bundle):
         if row['due_day'] is not None: _integer(row['due_day'],1,31)
     _unique([(r['recurring_id'],r['effective_month']) for r in data['recurring_versions']],'生效版本')
     for row in data['recurring_versions']:
-        if type(row['recurring_id']) is not str or row['recurring_id'] not in rules or rules[row['recurring_id']]['kind']!='固定': _invalid('版本規則引用')
+        if type(row['recurring_id']) is not str or row['recurring_id'] not in rules: _invalid('版本規則引用')
+        rule = rules[row['recurring_id']]
         _iso(row['effective_month'],month=True)
         if row['effective_month']<rules[row['recurring_id']]['start_month']: _invalid('生效月份')
         for key in ('name','category'): _text(row[key])
         _cents(row['cents']);_integer(row['due_day'],1,31)
+        if rule['kind']!='固定' and (row['name']!=rule['name'] or row['due_day']!=(rule['due_day'] or 1)): _invalid('版本不可更改欄位')
     _unique([(r['month'],r['category']) for r in data['budgets']],'預算')
     for row in data['budgets']:
         _iso(row['month'],month=True);_text(row['category']);_cents(row['cents'],zero=True)

@@ -1,5 +1,5 @@
 import * as distribution from './vendor/lossless-json-4.3.1/lossless-json.js';
-import { validateInput, categoryOptions, categoryName, paymentName, budgetCents, cents, isoDate, ValidationError } from './rules.mjs';
+import { validateInput, categoryOptions, categoryName, paymentName, budgetCents, cents, isoDate, fixedNextMonth, fixedDueDate, fixedSettings, validateFixed, recurringProgress, ValidationError } from './rules.mjs';
 import { emptyData, readBackup, writeBackup, integerValue, storedInteger, MAX_INTEGER, MAX_BYTES } from './backup.mjs';
 import { STORES, openLedgerDatabase, readSnapshot, scanTransaction, addState, portable, metadata, rowKey } from './idb.mjs';
 
@@ -28,7 +28,9 @@ function transaction(db, operation) {
     try { tx = db.transaction(STORES, 'readwrite'); } catch { reject(storageFailure()); return; }
     tx.oncomplete = () => resolve(result);
     tx.onabort = () => reject(failure || storageFailure());
-    scanTransaction(tx, (state, meta) => { result = operation(tx, state, meta); }, error => { failure = error; });
+    scanTransaction(tx, (state, meta) => { result = operation(tx, state, meta); }, error => {
+      failure = error instanceof LedgerError || error instanceof ValidationError ? error : storageFailure();
+    });
   });
 }
 
@@ -58,7 +60,7 @@ export const exportPortableBackup = async db => writeBackup(portable(await readS
 
 function current(state, id, expectedRevision) {
   const position = state.expenses.findIndex(row => row.id === id && row.kind === 'consumption' &&
-    row.source === 'manual' && row.voided === 0);
+    ['manual', '固定', '訂閱', '分期'].includes(row.source) && row.voided === 0);
   if (position < 0) throw new LedgerError('unavailable', '此筆消費無法操作，請重新載入。');
   const entry = state.expenses[position];
   let expected;
@@ -275,4 +277,100 @@ export function updateBudget(db, expectedBudgets, operation, category, value) {
     for (const key of ['row_count', 'backup_bytes']) tx.objectStore('meta').put({key, value:meta[key]});
     return changed;
   });
+}
+
+export function changeRecurring(state, operation, id, expectedRevision, form, today, fixedOnly = false) {
+  const meta = metadata(state);
+  const month = isoDate(today).slice(0, 7), changed = structuredClone(state);
+  const rule = changed.recurring_rules.find(row => row.id === id && (!fixedOnly || row.kind === '固定') && row.active === 1);
+  if (operation !== 'add' && operation !== 'sync') {
+    if (!rule || recurringProgress(changed, rule).complete) {
+      throw new LedgerError('unavailable', '此定期規則無法操作，請重新載入。');
+    }
+    let expected;
+    try { expected = integerValue(expectedRevision); } catch { /* Fixed conflict message below. */ }
+    if (expected === undefined || expected < 0n || integerValue(rule.revision) !== expected) {
+      throw new LedgerError('conflict', '定期規則已變更，請重新載入後再操作。');
+    }
+    incrementRevision(rule);
+  }
+  if (operation === 'add' || operation === 'update') {
+    const kind = operation === 'add' ? form?.kind ?? '固定' : rule.kind;
+    const periods = operation === 'add' ? (kind === '分期' ? form?.periods : form?.periods ?? 0) : rule.periods;
+    if (!['固定', '訂閱', '分期'].includes(kind) || (fixedOnly && kind !== '固定') ||
+        (operation === 'add' && (!Number.isInteger(periods) || (kind === '分期' ? periods < 1 || periods > 600 : periods !== 0))) ||
+        (operation === 'update' && kind === '固定' && form?.periods !== undefined && form.periods !== 0)) {
+      throw new ValidationError('請選擇有效的支出類型；分期總期數須為 1～600。');
+    }
+    const effective = operation === 'add' ? form?.start_month : fixedNextMonth(month);
+    if (operation === 'add' && ![month, fixedNextMonth(month)].includes(effective)) {
+      throw new ValidationError('開始月份只能選台灣本月或下月。');
+    }
+    if (operation === 'update' && form?.start_month !== undefined && form.start_month !== rule.start_month) {
+      throw new ValidationError('建立後不能更改開始月份。');
+    }
+    const previous = operation === 'update' ? fixedSettings(changed, rule, effective) : null;
+    const fields = validateFixed(form, changed, today, previous, operation === 'update' && kind !== '固定' ? rule : null);
+    const key = operation === 'add' ? identifier('r_') : rule.id;
+    if (operation === 'add') changed.recurring_rules.push({id:key, ...fields, kind, start_month:effective, periods, active:1, revision:0});
+    if (kind === '固定' || operation === 'update') {
+      const version = changed.recurring_versions.find(row => row.recurring_id === key && row.effective_month === effective);
+      if (version) Object.assign(version, fields);
+      else changed.recurring_versions.push({id:identifier('v_'), recurring_id:key, effective_month:effective, ...fields});
+    }
+  } else if (operation === 'sync' || operation === 'stop') {
+    const posted = new Set(changed.expenses.filter(row => row.recurring_id !== null).map(row => row.recurring_id + ':' + row.period));
+    const versions = new Map();
+    for (const row of changed.recurring_versions) {
+      if (!versions.has(row.recurring_id)) versions.set(row.recurring_id, []);
+      versions.get(row.recurring_id).push(row);
+    }
+    let count = meta.row_count;
+    const selected = operation === 'stop' ? [rule] : changed.recurring_rules.filter(row => (!fixedOnly || row.kind === '固定') && row.active === 1);
+    for (const selectedRule of selected) {
+      const history = (versions.get(selectedRule.id) || []).sort((a, b) => a.effective_month.localeCompare(b.effective_month));
+      let settings = selectedRule, index = 0, installment = 1n;
+      const total = integerValue(selectedRule.periods);
+      for (let period = selectedRule.start_month; period <= month && (total === 0n || installment <= total); installment++) {
+        while (index < history.length && history[index].effective_month <= period) settings = history[index++];
+        const due = fixedDueDate(period, settings.due_day), key = selectedRule.id + ':' + period;
+        if (due <= today && !posted.has(key)) {
+          if (count + 2 > 100000) throw new LedgerError('limit', '本機帳本已達完整備份容量上限，資料沒有變更。');
+          const note = settings.name + (selectedRule.kind === '分期' ? `（第 ${installment}/${total} 期）` : '');
+          if ([...note].length > 4096) throw new LedgerError('limit', '分期項目加上期數後超過備份文字上限，資料沒有變更。請保留原備份。');
+          const entry = {id:identifier('e_'), spent_on:due, cents:settings.cents, category:settings.category,
+            note, source:selectedRule.kind, recurring_id:selectedRule.id, period, voided:0,
+            payment_source_id:null, payment_source_name:'未指定', kind:'consumption', revision:0};
+          changed.expenses.push(entry);
+          changed.actions.push({id:identifier('a_'), expense_id:entry.id, before:null, undone:0});
+          posted.add(key); count += 2;
+        }
+        if (period === month) break;
+        period = fixedNextMonth(period);
+      }
+    }
+    if (operation === 'stop') rule.active = 0;
+  } else throw new ValidationError('請選擇有效的固定支出操作。');
+  metadata(changed);
+  return changed;
+}
+
+export function changeFixed(state, operation, id, expectedRevision, form, today) {
+  return changeRecurring(state, operation, id, expectedRevision, form, today, true);
+}
+
+export function updateRecurring(db, operation, id = null, expectedRevision = null, form = null, fixedOnly = false) {
+  return transaction(db, (tx, state) => {
+    if (state === null) throw new LedgerError('uninitialized', '測試帳本尚未建立。');
+    const changed = changeRecurring(state, operation, id, expectedRevision, form, taiwanToday(), fixedOnly);
+    saveSettings(tx, state, changed);
+    if (changed.actions.length !== state.actions.length) {
+      tx.objectStore('meta').put({key:'next_action_order', value:changed.actions.length});
+    }
+    return changed;
+  });
+}
+
+export function updateFixed(db, operation, id = null, expectedRevision = null, form = null) {
+  return updateRecurring(db, operation, id, expectedRevision, form, true);
 }

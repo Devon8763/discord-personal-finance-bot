@@ -5,6 +5,7 @@ import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from itertools import zip_longest
+from pathlib import Path
 from sqlite3 import Error as SQLiteError
 from urllib.parse import parse_qs, urlencode
 
@@ -17,6 +18,11 @@ from . import auth
 
 
 router = APIRouter()
+BACKUP_HEADERS = {
+    'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
+    'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'",
+}
 TAIPEI = timezone(timedelta(hours=8))
 QUICK_ENTRY_ERROR = "資料無法儲存，請檢查後再試。"
 CALENDAR_ERROR = "無法顯示月曆，請返回後重試。"
@@ -301,6 +307,63 @@ def _comparison_chart_data(result, values):
     } for row in result['categories']]
     return dict(periods=periods, categories=categories, single_category=bool(values['category']),
                 keyword_filtered=bool(values['keyword'].strip()))
+
+
+@router.get('/export/ledger', response_class=HTMLResponse)
+async def ledger_backup_page(request: Request):
+    if not auth.current_user_id(request.session):
+        return Response('請先登入後再匯出。', status_code=403, headers=BACKUP_HEADERS)
+    if request.url.query:
+        return Response('請使用完整帳本搬移入口。', status_code=400, headers=BACKUP_HEADERS)
+    return request.app.state.templates.TemplateResponse(
+        request=request, name='ledger_backup.html', headers=BACKUP_HEADERS,
+        context={'csrf_token': request.session['csrf_token']},
+    )
+
+
+@router.post('/export/ledger/payload')
+async def ledger_backup_payload(request: Request):
+    user_id = auth.current_user_id(request.session)
+    if not user_id:
+        return Response('請先登入後再匯出。', status_code=403, headers=BACKUP_HEADERS)
+    if request.url.query:
+        return Response('匯出請求不符合規則。', status_code=400, headers=BACKUP_HEADERS)
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 1024:
+            return Response('匯出請求不符合規則。', status_code=400, headers=BACKUP_HEADERS)
+        body.extend(chunk)
+    try:
+        if request.headers.get('content-type', '').split(';')[0].lower() != 'application/x-www-form-urlencoded':
+            raise ValueError
+        form = parse_qs(body.decode('utf-8'), keep_blank_values=True, max_num_fields=20)
+    except (UnicodeDecodeError, ValueError):
+        form = {}
+    tokens = form.get('csrf_token', [])
+    if len(tokens) != 1 or not tokens[0].isascii() or not auth.validate_csrf(request.session, tokens[0]):
+        return Response('操作驗證失敗，請重新登入或載入頁面。', status_code=403, headers=BACKUP_HEADERS)
+    if set(form) != {'csrf_token'}:
+        return Response('匯出請求不符合規則。', status_code=400, headers=BACKUP_HEADERS)
+    try:
+        payload = life_service.export_portable_backup(user_id)
+    except Exception:
+        return Response('無法匯出完整帳本，請稍後重試。', status_code=503, headers=BACKUP_HEADERS)
+    return Response(payload, media_type='application/json', headers=BACKUP_HEADERS)
+
+
+@router.get('/export/ledger/modules/{name:path}')
+async def ledger_backup_module(request: Request, name: str):
+    root = Path(__file__).resolve().parents[1]
+    files = {item: root / 'local-first' / item for item in (
+        'backup-crypto.mjs', 'backup.mjs', 'rules.mjs', 'vendor/lossless-json-4.3.1/lossless-json.js')}
+    files['download.mjs'] = root / 'web/static/ledger-backup.mjs'
+    if name not in files or request.url.query:
+        return Response('此資源無法提供。', status_code=404, headers=BACKUP_HEADERS)
+    try:
+        payload = files[name].read_bytes()
+    except OSError:
+        return Response('此資源無法提供。', status_code=503, headers=BACKUP_HEADERS)
+    return Response(payload, media_type='text/javascript', headers=BACKUP_HEADERS)
 
 
 @router.get('/export', response_class=HTMLResponse)

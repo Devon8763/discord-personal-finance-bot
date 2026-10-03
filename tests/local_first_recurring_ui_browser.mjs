@@ -1,0 +1,63 @@
+import {DB_NAME,openDatabase,readLedger,updateRecurring,exportPortableBackup,taiwanToday} from '../local-first/ledger.mjs';
+import {emptyData} from '../local-first/backup.mjs';
+import {STORES,addState} from '../local-first/idb.mjs';
+const check=(value,message)=>{if(!value)throw new Error(message);};
+const report=document.createElement('pre');report.id='recurring-result';document.body.prepend(report);
+const open=indexedDB.open.bind(indexedDB);indexedDB.open=(name,version)=>open(name===DB_NAME?'life-ledger-recurring-ui-checks':name,version);
+const db=await openDatabase(),month=taiwanToday().slice(0,7),lines=[];
+const tx=db.transaction(STORES,'readwrite');for(const section of STORES)tx.objectStore(section).clear();
+addState(tx,{format:'local-first-test-ledger',version:2,owner:'local-test-owner',...emptyData(),payment_sources:[{id:'p_cash',name:'現金',active:1}]});
+await new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onabort=reject;});
+const bytes=async()=>new TextDecoder().decode(await exportPortableBackup(db));
+const wait=async action=>{const complete=new Promise((resolve,reject)=>{const observer=new MutationObserver(()=>{
+  if(document.querySelector('#status').textContent.includes('正在儲存'))return;observer.disconnect();clearTimeout(timeout);resolve();});
+  const timeout=setTimeout(()=>{observer.disconnect();reject(new Error('Write timeout'));},5000);observer.observe(document.body,{subtree:true,attributes:true,childList:true});});action();await complete;};
+try {
+  const before=await bytes();await import('../local-first/page.mjs');check(await bytes()===before,'Read-only load wrote');
+  const form=document.querySelector('#fixed-form');check(form.elements.kind,'Missing recurring type selector');
+  document.querySelector('#ledger-settings').open=true;document.querySelector('#fixed-settings').open=true;
+  const select=kind=>{form.elements.kind.value=kind;form.elements.kind.dispatchEvent(new Event('change'));};
+  for(const kind of ['訂閱','固定']){select(kind);check(form.elements.periods.disabled&&document.querySelector('#installment-fields').hidden,'Non-installment requires periods');}
+  select('分期');check(!form.elements.periods.disabled&&!document.querySelector('#installment-fields').hidden,'Missing installment periods');
+  form.elements.name.value='<img src=x onerror="window.recurringXss=1">';form.elements.amount.value='.29';form.elements.category.value='居住';form.elements.due_day.value='1';form.elements.periods.value='0';
+  form.elements.name.focus();await wait(()=>form.requestSubmit());check(form.elements.periods.value==='0'&&form.elements.name.value.startsWith('<img')&&document.querySelector('#fixed-error').textContent,'Invalid form lost');
+  form.elements.periods.value='1';await wait(()=>{form.requestSubmit();form.requestSubmit();});
+  let state=await readLedger(db);check(state.recurring_rules.length===1&&!state.expenses.length&&!state.recurring_versions.length,'Repeated add or implicit posting/version');
+  const row=()=>document.querySelector('#fixed-list > li');check(row().textContent.includes('<img')&&!row().querySelector('img')&&row().querySelector('[data-operation="update"]'),'Unsafe text or missing installment edit');
+  check(form.elements.name.value===''&&document.activeElement===form.elements.name,'Success input/focus');
+  lines.push('read-only collapsed page; type selector/period visibility; invalid input retained; repeated create and XSS text');
+  row().querySelector('[data-operation="update"]').click();
+  check(['name','due_day','start_month','kind','periods'].every(key=>form.elements[key].disabled),'Immutable fields enabled');
+  check(document.querySelector('#fixed-form-title').textContent.includes('更改分期（下月生效）')&&document.activeElement===form.elements.amount,'Edit label/focus');
+  form.elements.amount.value='.31';form.elements.category.value='醫療';await wait(()=>{form.requestSubmit();form.requestSubmit();});
+  state=await readLedger(db);check(state.recurring_rules[0].cents==='29'&&state.recurring_versions.length===1&&state.recurring_versions[0].cents==='31'&&!state.expenses.length,'Edit rewrote original or posted');
+  check(row().textContent.includes('目前設定：')&&row().textContent.includes('下月生效設定')&&row().textContent.includes('0.31 元'),'Pending/current unclear');
+  row().querySelector('[data-operation="update"]').click();form.elements.amount.value='.37';await wait(()=>form.requestSubmit());
+  state=await readLedger(db);check(state.recurring_versions.length===1&&state.recurring_versions[0].cents==='37'&&state.recurring_rules[0].revision===2,'Repeated edit conflict');
+  row().querySelector('[data-operation="update"]').click();const cancelEdit=await bytes();form.elements.amount.value='9';document.querySelector('#cancel-fixed-edit').click();
+  check(await bytes()===cancelEdit&&!form.elements.name.disabled&&!form.elements.due_day.disabled,'Cancel changed data or left new fields disabled');
+  lines.push('installment only amount/category editable; next-month current/pending visible; repeat edit replaces version; cancel resets controls without writing');
+  const beforeCancel=await bytes();row().querySelector('[data-operation="stop"]').click();check(document.querySelector('#fixed-stop-summary').textContent.includes('分期'),'Stop confirmation missing type');
+  document.querySelector('#cancel-fixed-stop').click();check(await bytes()===beforeCancel,'Cancel wrote');
+  await wait(()=>{document.querySelector('#fixed-sync').click();document.querySelector('#fixed-sync').click();});
+  state=await readLedger(db);check(state.expenses.length===1&&state.actions.length===1&&state.expenses[0].source==='分期','Repeated sync duplicate');
+  check(row().textContent.includes('已完成')&&!row().querySelector('button')&&document.querySelector('#budget-spent').textContent.includes('0.29 元'),'Completion controls/budget');
+  check(!window.recurringXss,'XSS executed');lines.push('cancel unchanged; one final installment/action; completed removes stop/edit; precise budget refresh');
+  select('訂閱');form.elements.name.value='合成訂閱';form.elements.amount.value='1';form.elements.due_day.value='1';await wait(()=>form.requestSubmit());
+  const subscription=(await readLedger(db)).recurring_rules.at(-1);row().querySelector('[data-operation="update"]').click();
+  form.elements.amount.value='.41';const competing=await openDatabase();await updateRecurring(competing,'update',subscription.id,0,{amount:'.53',category:'居住'});competing.close();
+  const edited=await bytes();await wait(()=>form.requestSubmit());
+  check(form.elements.amount.value==='.41'&&document.querySelector('#fixed-error').textContent.includes('重新載入')&&await bytes()===edited,'Stale edit lost input/overwrote');
+  document.querySelector('#cancel-fixed-edit').click();
+  row().querySelector('[data-operation="stop"]').click();const other=await openDatabase();await updateRecurring(other,'stop',subscription.id,1);other.close();
+  const stale=await bytes();await wait(()=>document.querySelector('#confirm-fixed-stop').click());
+  check(document.querySelector('#fixed-stop-dialog').open&&document.querySelector('#fixed-stop-error').textContent.includes('重新載入')&&await bytes()===stale,'Stale stop overwritten');
+  document.querySelector('#cancel-fixed-stop').click();lines.push('subscription edit/stop competing connection stale revisions rejected without overwrite; input retained');
+  select('分期');form.elements.name.value='故障輸入';form.elements.amount.value='1';form.elements.periods.value='2';
+  const prior=await bytes(),put=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=()=>{throw new DOMException('PRIVATE-DETAIL','QuotaExceededError');};
+  try{await wait(()=>form.requestSubmit());}finally{IDBObjectStore.prototype.put=put;}
+  check(await bytes()===prior&&form.elements.name.value==='故障輸入'&&form.elements.periods.value==='2'&&!document.querySelector('#fixed-error').textContent.includes('PRIVATE-DETAIL'),'Failure leaked/lost input/partial write');
+  check(performance.getEntriesByType('resource').every(row=>new URL(row.name).origin===location.origin),'External resource');
+  lines.push('quota failure keeps all input, safe error, exact unchanged backup and only local resources');
+  report.textContent='PASS：'+lines.length+' 組訂閱／分期畫面驗證\n'+lines.join('\n');
+}catch(error){report.textContent='FAIL：'+error.message;throw error;}finally{db.close();}

@@ -2,7 +2,7 @@
 
 ## Chart.js 4.5.1
 
-- 用途：生活記帳 Web `/compare` 頁的本機圖表呈現；其他頁面不載入。
+- 用途：生活記帳 Web `/compare` 與獨立 local-first「支出比較」圖表；local-first 僅送必要彙總及精確提示文字，使用者執行比較後才載入，不新增套件。
 - 官方版本：[v4.5.1](https://github.com/chartjs/Chart.js/releases/tag/v4.5.1)，2025-10-13 發行；2026-09-29 核對 GitHub 最新穩定發行。
 - 來源：[官方發行套件 chart.js-4.5.1.tgz](https://github.com/chartjs/Chart.js/releases/download/v4.5.1/chart.js-4.5.1.tgz)。沒有 npm 安裝或 Node 建置。
 - 本機檔案：[chart.umd.min.js](web/static/vendor/chartjs-4.5.1/chart.umd.min.js) 與其原始 [source map](web/static/vendor/chartjs-4.5.1/chart.umd.min.js.map)，均逐位元保留官方套件內容，不修改壓縮程式或 sourceMappingURL。
@@ -16,6 +16,8 @@
 - 授權：MIT；完整 [kurkle-color-LICENSE.md](web/static/vendor/chartjs-4.5.1/kurkle-color-LICENSE.md) 直接保留[該版官方授權](https://raw.githubusercontent.com/kurkle/color/v0.3.2/LICENSE.md)（2018–2021 Jukka Kurkela），UMD／source map 原有 2023 版權聲明亦保留。
 
 圖表資源由本機 `/static/` 提供，不使用 CDN、外部字型、圖表 API、adapter、外掛或遙測。圖表呈現不需對外下載；Discord OAuth 登入仍需要既有網路服務，並非離線登入。
+
+local-first 固定入口以明確白名單 `/local-first/vendor/chartjs-4.5.1/chart.umd.min.js` 直接提供上述原檔，沒有另複製或修改發行內容，不開放其他 Web 檔案；必要 JS 列入完整離線快取。無需啟動 Python Web、登入或 CDN，source map／授權／provenance 原檔留於專案供稽核，不列入執行白名單。四檔 SHA-256 與既有 provenance 核對測試通過，Chart.js 與內嵌 @kurkle/color 的 MIT 聲明保留。
 
 ## lossless-json 4.3.1
 

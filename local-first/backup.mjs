@@ -110,10 +110,12 @@ export function validateBackup(bundle) {
     if (row.due_day !== null) integerValue(row.due_day, 1n, 31n);
   }
   for (const row of data.recurring_versions) {
-    if (typeof row.recurring_id !== 'string' || rules.get(row.recurring_id)?.kind !== '固定') invalid('版本規則引用');
+    const rule = rules.get(row.recurring_id);
+    if (typeof row.recurring_id !== 'string' || !rule) invalid('版本規則引用');
     iso(row.effective_month, true);
     if (row.effective_month < rules.get(row.recurring_id).start_month) invalid('生效月份');
     text(row.name); text(row.category); amount(row.cents); integerValue(row.due_day, 1n, 31n);
+    if (rule.kind !== '固定' && (row.name !== rule.name || row.due_day !== (rule.due_day ?? 1))) invalid('版本不可更改欄位');
   }
   unique(data.recurring_versions.map(row => row.recurring_id + '\0' + row.effective_month), '生效版本');
   for (const row of data.budgets) { iso(row.month, true); text(row.category); amount(row.cents, true); }

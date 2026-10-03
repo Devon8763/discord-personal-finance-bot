@@ -1,4 +1,4 @@
-import { DB_NAME, openDatabase, initializeLedger, readLedger } from '../local-first/ledger.mjs';
+import { DB_NAME, openDatabase, initializeLedger, readLedger, editExpense } from '../local-first/ledger.mjs';
 import { SECTIONS, writeBackup } from '../local-first/backup.mjs';
 import { portable } from '../local-first/idb.mjs';
 const lines = [];
@@ -100,6 +100,72 @@ try {
   await done(() => document.querySelector('#confirm-delete').click());
   ok((await readLedger(db)).expenses[0].voided === 1 && !document.querySelector('#expenses li'), 'Soft delete failed');
   lines.push('confirmed soft delete removes effective row');
+  const transact = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args) {
+    if (args[1] === 'readwrite') throw new DOMException(storageDetail, 'InvalidStateError');
+    return transact.apply(this, args);
+  };
+  input('1.25', '無法開啟交易的合成輸入');
+  await done(() => form.requestSubmit());
+  IDBDatabase.prototype.transaction = transact;
+  ok(form.elements.note.value === '無法開啟交易的合成輸入' && !document.querySelector('#error').textContent.includes(storageDetail), 'Unavailable database loses input or leaks detail');
+  ok((await readLedger(db)).expenses.length === 1, 'Unavailable database changed data');
+  lines.push('unavailable transaction retains input and safe error');
+  input('1.25', '重複點擊合成消費');
+  await done(() => { form.requestSubmit(); form.requestSubmit(); });
+  ok((await readLedger(db)).expenses.length === 2, 'Repeated submission duplicates expense');
+  lines.push('pending repeated submission records once');
+  const current = (await readLedger(db)).expenses.at(-1);
+  document.querySelector('#expenses button').click();
+  const changedElsewhere = await editExpense(db, current.id, current.revision, {amount:'1.50',note:'另一分頁已儲存',spent_on:current.spent_on,category:current.category,payment_source_id:''}, current.spent_on);
+  input('1.75', '舊分頁保留輸入');
+  await done(() => form.requestSubmit());
+  ok(form.elements.note.value === '舊分頁保留輸入' && document.querySelector('#error').textContent.includes('重新載入'), 'Stale edit loses input or safe conflict');
+  ok(writeBackup(portable(await readLedger(db))).toString() === writeBackup(portable(changedElsewhere)).toString(), 'Stale edit overwrote newer data');
+  document.querySelector('#cancel-edit').click();
+  lines.push('two connections stale expense revision preserves draft and newer data');
+  const modal = new URLSearchParams(location.search).get('case');
+  if (modal === 'settings-dialog') {
+    document.querySelector('#ledger-settings').open = true;
+    const row = [...document.querySelectorAll('#category-list li')].find(row => row.querySelector('span').textContent === maliciousCategory);
+    row.querySelector('[data-operation="rename"]').click();
+    document.querySelector('#setting-name').value = '更改後合成分類';
+  } else if (modal === 'fixed-dialog') {
+    document.querySelector('#ledger-settings').open = true; document.querySelector('#fixed-settings').open = true;
+    const fixed = document.querySelector('#fixed-form');
+    fixed.elements.name.value = '確認停用故障合成規則'; fixed.elements.amount.value = '1'; fixed.elements.due_day.value = '1';
+    await done(() => fixed.requestSubmit());
+    document.querySelector('#fixed-list [data-operation="update"]').click();
+    document.querySelector('#fixed-list [data-operation="stop"]').click();
+  }
+  const beforeCommit = await readLedger(db), replace = Element.prototype.replaceChildren;
+  Element.prototype.replaceChildren = function (...args) {
+    if (modal === 'settings-dialog' ? this === form.elements.category : modal === 'fixed-dialog' ? this === document.querySelector('#fixed-form').elements.category : this.id === 'category-list') { Element.prototype.replaceChildren = replace; throw new Error(storageDetail); }
+    return replace.apply(this, args);
+  };
+  input('2.50', '交易完成後畫面故障合成消費');
+  const finished = new Promise((resolve, reject) => {
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('#status').textContent.includes('正在儲存')) return;
+      observer.disconnect(); clearTimeout(timer); resolve();
+    }), timer = setTimeout(() => { observer.disconnect(); reject(new Error('Post-commit UI timeout')); }, 5000);
+    observer.observe(document.body, {childList:true,subtree:true});
+  });
+  if (modal === 'settings-dialog') document.querySelector('#settings-form').requestSubmit();
+  else if (modal === 'fixed-dialog') document.querySelector('#confirm-fixed-stop').click();
+  else form.requestSubmit();
+  await finished; Element.prototype.replaceChildren = replace;
+  const committed = await readLedger(db);
+  ok(modal === 'settings-dialog' ? committed.categories.some(row => row.name === '更改後合成分類') : modal === 'fixed-dialog' ? committed.recurring_rules.at(-1).active === 0 : committed.expenses.length === beforeCommit.expenses.length + 1 && committed.actions.length === beforeCommit.actions.length + 1, 'Expected completed transaction missing');
+  ok(document.querySelector('#status').textContent.includes('已儲存') && document.querySelector('#status').textContent.includes('重新載入'), 'Committed data falsely reported as failed');
+  ok(document.querySelector('#fields').disabled && !document.querySelector('#download-backup').disabled, 'Post-commit failure permits repeated writes or blocks backup');
+  ok(![...document.querySelectorAll('dialog')].some(dialog => dialog.open), 'Committed UI failure traps backup behind modal');
+  document.querySelector('#download-backup').click();
+  ok(!document.querySelector('#export-panel').hidden, 'Post-commit failure blocks backup panel');
+  input('2.50', '不得重複寫入'); form.requestSubmit();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  ok((await readLedger(db)).expenses.length === committed.expenses.length && !document.querySelector('#error').textContent.includes(storageDetail), 'Post-commit retry writes or leaks detail');
+  lines.push('committed UI failure reports truth, blocks writes until reload, preserves backup access');
   report.textContent = 'PASS：' + lines.length + '組實際頁面故障／安全操作驗證\n' + lines.join('\n');
 } catch (error) { report.textContent = 'FAIL：' + error.message + '\n' + lines.join('\n'); throw error; }
 finally { db.close(); }

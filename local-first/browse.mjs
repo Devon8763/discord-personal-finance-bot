@@ -1,10 +1,11 @@
 import { cents, isoDate, categoryOptions, ValidationError } from './rules.mjs';
 
 const asciiLower = text => text.replace(/[A-Z]/g, char => char.toLowerCase());
-const ordered = rows => rows.sort((a, b) => b.spent_on.localeCompare(a.spent_on) ||
+export const literalMatch = (text, keyword) => asciiLower(text).includes(asciiLower(keyword));
+export const ordered = rows => rows.sort((a, b) => b.spent_on.localeCompare(a.spent_on) ||
   (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
 
-function activeExpenses(state, today) {
+export function activeExpenses(state, today) {
   return state.expenses.filter(row => row.kind === 'consumption' && row.voided === 0 &&
     ['manual', '固定', '訂閱', '分期'].includes(row.source) && row.spent_on <= today);
 }
@@ -41,9 +42,8 @@ export function validateSearch(query, today) {
 
 export function searchExpenses(state, query, today) {
   const { keyword, start, end } = validateSearch(query, today);
-  const needle = asciiLower(keyword);
   return ordered(activeExpenses(state, today).filter(row => row.spent_on >= start && row.spent_on <= end &&
-    (!needle || asciiLower(row.note).includes(needle))));
+    (!keyword || literalMatch(row.note, keyword))));
 }
 
 export function calendarMonth(state, month, today) {

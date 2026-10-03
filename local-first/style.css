@@ -17,8 +17,24 @@ button:disabled { cursor: wait; opacity: .6; }
 fieldset > .buttons { margin-top: 1rem; }
 #error, #delete-error { color: #a2241b; overflow-wrap: anywhere; }
 #search-error, #calendar-error { color: #a2241b; }
+#comparison-error { color: #a2241b; }
+.comparison-table { overflow-x: auto; }
+.comparison-table table { border-collapse: collapse; width: 100%; }
+.comparison-table th, .comparison-table td { text-align: left; padding: .6rem; border-bottom: 1px solid #dce5df; overflow-wrap: anywhere; }
+.comparison-chart { position: relative; height: 300px; margin: 1rem 0; }
+.comparison-chart[hidden] { display: none; }
+.comparison-pies { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+#comparison-results { overflow-wrap: anywhere; }
 #settings-error, #setting-error { color: #a2241b; overflow-wrap: anywhere; }
 #budget-error { color: #a2241b; overflow-wrap: anywhere; }
+#fixed-error, #fixed-stop-error { color: #a2241b; overflow-wrap: anywhere; }
+#export-error, #restore-password-error, #csv-error { color: #a2241b; overflow-wrap: anywhere; }
+#export-password-fields { margin-top: 1rem; }
+#export-password-fields[hidden] { display: none; }
+.backup-risk { display: flex; align-items: center; }
+.backup-risk input { width: auto; flex-shrink: 0; }
+#fixed-list li { padding: .6rem 0; border-bottom: 1px solid #dce5df; overflow-wrap: anywhere; }
+#fixed-list h3 { font-size: 1rem; }
 #budget-setting-list li, #category-budget-list li { padding: .6rem 0; border-bottom: 1px solid #dce5df; overflow-wrap: anywhere; }
 #budget-setting-list form { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; margin-bottom: .5rem; }
 #budget-setting-list label { flex: 1 1 180px; }
@@ -48,6 +64,7 @@ dialog::backdrop { background: #0006; }
 @media (max-width: 650px) {
   main { padding: .8rem; }
   .form-grid { grid-template-columns: 1fr; }
+  .comparison-pies { grid-template-columns: 1fr; }
   .expense { grid-template-columns: 1fr 1fr; }
   .expense > div:nth-child(2) { grid-column: 1 / -1; grid-row: 1; }
 }
